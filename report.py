@@ -61,29 +61,29 @@ def compute_contains_all_stats(results: List[Dict]) -> Dict[str, Dict[str, Tuple
 def run_code_tests_verbose(output: str, tests: List[Dict[str, Any]]) -> bool:
     code = extract_python_code(output)
     if not code:
-        print("  no code extracted")
+        print("  no code extracted (FAIL)")
         return False
     namespace: Dict[str, Any] = {}
     try:
         exec(code, namespace)
     except Exception as exc:
-        print(f"  exec failed with {exc}")
+        print(f"  exec failed with {exc} (FAIL)")
         return False
     all_ok = True
     for test in tests:
         expr = test.get("call")
         expected = test.get("expected")
         if not expr:
-            print("  missing call expression")
+            print("  missing call expression (FAIL)")
             all_ok = False
             continue
         try:
             value = eval(expr, namespace)
-            print(f"  {expr} -> {value} (expected {expected})")
+            print(f"  {expr} -> {value} (expected {expected}) ({'OK' if value == expected else 'FAIL'})")
             if value != expected:
                 all_ok = False
         except Exception as exc:
-            print(f"  {expr} raised {exc}")
+            print(f"  {expr} raised {exc} (FAIL)")
             all_ok = False
     return all_ok
 
