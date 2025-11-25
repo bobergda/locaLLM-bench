@@ -1,5 +1,7 @@
 ollama_host: "http://localhost:11434"
 models:
-  - "llama3"
-  - "mistral"
+  - "magistral:24b"
+  - "gpt-oss:20b"
+  - "qwen3:14b"
+  - "qwen3:8b"
 tests_dir: "tests"
