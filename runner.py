@@ -8,11 +8,13 @@ import requests
 import yaml
 
 
-def setup_logger(log_path: Path) -> logging.Logger:
+def setup_logger(log_path: Path, debug: bool = False) -> logging.Logger:
     logger = logging.getLogger("ollabench")
     if logger.handlers:
+        # Update level if already configured
+        logger.setLevel(logging.DEBUG if debug else logging.INFO)
         return logger
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     stream_handler = logging.StreamHandler()
@@ -43,11 +45,13 @@ def call_ollama(model: str, prompt: str, host: str, logger: logging.Logger) -> D
     payload = {"model": model, "prompt": prompt, "stream": False}
     start = time.perf_counter()
     logger.info("Calling model=%s", model)
+    logger.debug("Request payload: %s", payload)
     response = requests.post(f"{host}/api/generate", json=payload, timeout=120)
     elapsed = time.perf_counter() - start
     response.raise_for_status()
     data = response.json()
     logger.info("Completed model=%s in %.2fs", model, elapsed)
+    logger.debug("Raw response: %s", data)
     return {
         "response": data.get("response", ""),
         "eval_count": data.get("eval_count"),
@@ -55,24 +59,35 @@ def call_ollama(model: str, prompt: str, host: str, logger: logging.Logger) -> D
     }
 
 
-def run_benchmark(config_path: Path) -> List[Dict[str, Any]]:
+def run_benchmark(config_path: Path, debug: bool = False) -> List[Dict[str, Any]]:
     logger = logging.getLogger("ollabench")
     cfg = load_config(config_path)
     tests_dir = Path(cfg.get("tests_dir", "tests"))
     host = cfg.get("ollama_host", "http://localhost:11434")
     models = cfg.get("models", [])
+    debug_mode = bool(cfg.get("debug", debug))
     logger.info("Loaded config: host=%s, models=%s, tests_dir=%s", host, models, tests_dir)
 
     test_sets = load_tests(tests_dir)
     logger.info("Loaded test sets: %s", list(test_sets.keys()))
 
     results: List[Dict[str, Any]] = []
-    for model in models:
+    for model_idx, model in enumerate(models):
+        if debug_mode and model_idx > 0:
+            logger.debug("Debug mode: limiting to first model only")
+            break
         logger.info("Starting model: %s", model)
-        for category, tasks in test_sets.items():
+        for category_idx, (category, tasks) in enumerate(test_sets.items()):
+            if debug_mode and category_idx > 0:
+                logger.debug("Debug mode: limiting to first category only")
+                break
             logger.info("  Category: %s (%d tasks)", category, len(tasks))
             for idx, task in enumerate(tasks):
+                if debug_mode and idx > 0:
+                    logger.debug("Debug mode: limiting to first task only")
+                    break
                 prompt = task["prompt"]
+                logger.debug("Prompt: %s", prompt)
                 meta = {k: v for k, v in task.items() if k != "prompt"}
                 try:
                     result = call_ollama(model, prompt, host, logger)
@@ -98,10 +113,12 @@ def save_results(results: List[Dict[str, Any]], path: Path) -> None:
 
 
 if __name__ == "__main__":
-    logger = setup_logger(Path("runner.log"))
     config_file = Path("config.yaml")
-    logger.info("Starting benchmark run")
-    results = run_benchmark(config_file)
+    cfg = load_config(config_file)
+    debug_flag = bool(cfg.get("debug", False))
+    logger = setup_logger(Path("runner.log"), debug=debug_flag)
+    logger.info("Starting benchmark run%s", " (debug)" if debug_flag else "")
+    results = run_benchmark(config_file, debug=debug_flag)
     output_path = Path("results.json")
     save_results(results, output_path)
     logger.info("Saved %d results to %s", len(results), output_path)
