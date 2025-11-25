@@ -1,8 +1,7 @@
-import csv
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from metrics import compute_accuracy, extract_python_code, score_contains_all, score_task
 
@@ -36,16 +35,6 @@ def format_contains_all_table(stats: Dict[str, Dict[str, Tuple[int, int]]]) -> s
     return "\n".join(lines)
 
 
-def save_csv(accuracies: Dict[str, Dict[str, float]], path: Path) -> None:
-    categories = sorted({cat for model_data in accuracies.values() for cat in model_data})
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["model", *categories, "overall"])
-        for model, cats in accuracies.items():
-            overall = sum(cats.values()) / len(categories) if categories else 0.0
-            writer.writerow([model, *[f"{cats.get(cat, 0.0):.4f}" for cat in categories], f"{overall:.4f}"])
-
-
 def compute_contains_all_stats(results: List[Dict]) -> Dict[str, Dict[str, Tuple[int, int]]]:
     stats: Dict[str, Dict[str, Tuple[int, int]]] = {}
     for row in results:
@@ -67,6 +56,36 @@ def compute_contains_all_stats(results: List[Dict]) -> Dict[str, Dict[str, Tuple
         passed, total = stats[model].get(category, (0, 0))
         stats[model][category] = (passed + (1 if is_ok else 0), total + 1)
     return stats
+
+
+def run_code_tests_verbose(output: str, tests: List[Dict[str, Any]]) -> bool:
+    code = extract_python_code(output)
+    if not code:
+        print("  no code extracted")
+        return False
+    namespace: Dict[str, Any] = {}
+    try:
+        exec(code, namespace)
+    except Exception as exc:
+        print(f"  exec failed with {exc}")
+        return False
+    all_ok = True
+    for test in tests:
+        expr = test.get("call")
+        expected = test.get("expected")
+        if not expr:
+            print("  missing call expression")
+            all_ok = False
+            continue
+        try:
+            value = eval(expr, namespace)
+            print(f"  {expr} -> {value} (expected {expected})")
+            if value != expected:
+                all_ok = False
+        except Exception as exc:
+            print(f"  {expr} raised {exc}")
+            all_ok = False
+    return all_ok
 
 
 def save_code_artifacts(results: List[Dict], output_dir: Path) -> int:
@@ -121,6 +140,27 @@ def collect_errors(results: List[Dict], limit: int = 5) -> List[str]:
     return errors
 
 
+def compute_code_test_stats(results: List[Dict], limit_failures: int = 5) -> Tuple[Dict[str, Dict[str, Tuple[int, int]]], List[str]]:
+    stats: Dict[str, Dict[str, Tuple[int, int]]] = {}
+    failures: List[str] = []
+    for row in results:
+        tests = row.get("code_tests")
+        if not tests or row.get("error"):
+            continue
+        model = row["model"]
+        category = row["category"]
+        prompt_preview = (row.get("prompt", "")[:80] + "...") if row.get("prompt") else ""
+        print(f"Running test ({model}): {prompt_preview}")
+        ok = run_code_tests_verbose(row.get("response", ""), tests)
+        if not ok and len(failures) < limit_failures:
+            failures.append(f"{model}/{category}/task{row.get('task_id','?')} failed code tests")
+        if model not in stats:
+            stats[model] = {}
+        passed, total = stats[model].get(category, (0, 0))
+        stats[model][category] = (passed + (1 if ok else 0), total + 1)
+    return stats, failures
+
+
 def main() -> None:
     results_path = Path("results.json")
     if not results_path.exists():
@@ -130,6 +170,7 @@ def main() -> None:
     accuracies = compute_accuracy(results)
     overall_acc = compute_overall_accuracy(results)
     contains_all_stats = compute_contains_all_stats(results)
+    code_test_stats, code_test_failures = compute_code_test_stats(results)
     saved_codes = save_code_artifacts(results, Path("artifacts"))
     errors = collect_errors(results)
     models = sorted({r["model"] for r in results})
@@ -152,14 +193,20 @@ def main() -> None:
             f.write("## Contains_all checks\n\n")
             f.write(format_contains_all_table(contains_all_stats))
             f.write("\n\n")
+        if code_test_stats:
+            f.write("## Code tests\n\n")
+            f.write(format_contains_all_table(code_test_stats))
+            f.write("\n\n")
+        if code_test_failures:
+            f.write("## Code test failures (first few)\n\n")
+            for fail in code_test_failures:
+                f.write(f"- {fail}\n")
+            f.write("\n")
         if errors:
             f.write("## Errors (first few)\n\n")
             for err in errors:
                 f.write(f"- {err}\n")
             f.write("\n")
-
-    save_csv(accuracies, Path("report.csv"))
-    print(f"Wrote {report_path} and report.csv; saved {saved_codes} code artifact(s) to artifacts/")
 
 
 if __name__ == "__main__":
