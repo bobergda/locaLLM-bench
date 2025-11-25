@@ -16,3 +16,6 @@ venv/
 results.json
 report.csv
 report.md
+
+# Logs
+*.log
