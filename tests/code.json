@@ -50,5 +50,91 @@
       { "call": "add_one(-5)", "expected": -4 },
       { "call": "add_one(1_000_000)", "expected": 1000001 }
     ]
+  },
+  {
+    "prompt": "Write a function fib(n: int) -> int that returns the nth Fibonacci number iteratively (n>=0). Return only the function code.",
+    "code_tests": [
+      { "call": "fib(0)", "expected": 0 },
+      { "call": "fib(1)", "expected": 1 },
+      { "call": "fib(10)", "expected": 55 },
+      { "call": "fib(20)", "expected": 6765 }
+    ]
+  },
+  {
+    "prompt": "Write a function factorial(n: int) -> int that returns n! for n>=0 using an iterative approach. Return only the function code.",
+    "code_tests": [
+      { "call": "factorial(0)", "expected": 1 },
+      { "call": "factorial(5)", "expected": 120 },
+      { "call": "factorial(8)", "expected": 40320 }
+    ]
+  },
+  {
+    "prompt": "Write a function gcd(a: int, b: int) -> int using the Euclidean algorithm. Return only the function code.",
+    "code_tests": [
+      { "call": "gcd(54, 24)", "expected": 6 },
+      { "call": "gcd(17, 13)", "expected": 1 },
+      { "call": "gcd(0, 5)", "expected": 5 }
+    ]
+  },
+  {
+    "prompt": "Write a function unique_preserve_order(items: list[int]) -> list[int] that removes duplicates while preserving first occurrence order. Return only the function code.",
+    "code_tests": [
+      { "call": "unique_preserve_order([1,2,2,3,1,4])", "expected": [1,2,3,4] },
+      { "call": "unique_preserve_order([])", "expected": [] },
+      { "call": "unique_preserve_order([5,5,5])", "expected": [5] }
+    ]
+  },
+  {
+    "prompt": "Write a function two_sum(nums: list[int], target: int) -> tuple[int,int] returning indices of two numbers that add up to target (assume one solution). Return only the function code.",
+    "code_tests": [
+      { "call": "two_sum([2,7,11,15], 9)", "expected": [0,1] },
+      { "call": "two_sum([3,2,4], 6)", "expected": [1,2] },
+      { "call": "two_sum([3,3], 6)", "expected": [0,1] }
+    ]
+  },
+  {
+    "prompt": "Write a function flatten(nested: list[list[int]]) -> list[int] that flattens a 2D list into 1D. Return only the function code.",
+    "code_tests": [
+      { "call": "flatten([[1,2],[3,4]])", "expected": [1,2,3,4] },
+      { "call": "flatten([[], [1], []])", "expected": [1] }
+    ]
+  },
+  {
+    "prompt": "Write a function rotate_left(nums: list[int], k: int) -> list[int] that rotates the list k steps to the left. Return only the function code.",
+    "code_tests": [
+      { "call": "rotate_left([1,2,3,4,5], 2)", "expected": [3,4,5,1,2] },
+      { "call": "rotate_left([1,2], 5)", "expected": [2,1] }
+    ]
+  },
+  {
+    "prompt": "Write a function is_anagram(a: str, b: str) -> bool ignoring spaces and case. Return only the function code.",
+    "code_tests": [
+      { "call": "is_anagram('Listen', 'Silent')", "expected": true },
+      { "call": "is_anagram('Dormitory', 'Dirty room')", "expected": true },
+      { "call": "is_anagram('Hello', 'Olelh!')", "expected": true },
+      { "call": "is_anagram('Test', 'Taste')", "expected": false }
+    ]
+  },
+  {
+    "prompt": "Write a function reverse_words(sentence: str) -> str that reverses word order but keeps words intact. Return only the function code.",
+    "code_tests": [
+      { "call": "reverse_words('Hello world')", "expected": "world Hello" },
+      { "call": "reverse_words('  one  two   ')", "expected": "two one" }
+    ]
+  },
+  {
+    "prompt": "Write a function chunk_list(items: list[int], size: int) -> list[list[int]] that splits the list into chunks of given size (last chunk may be shorter). Return only the function code.",
+    "code_tests": [
+      { "call": "chunk_list([1,2,3,4,5], 2)", "expected": [[1,2],[3,4],[5]] },
+      { "call": "chunk_list([], 3)", "expected": [] }
+    ]
+  },
+  {
+    "prompt": "Write a function normalize_path(path: str) -> str that normalizes a Unix-like path by resolving '.' and '..' and removing duplicate slashes (without using pathlib). Return only the function code.",
+    "code_tests": [
+      { "call": "normalize_path('/a//b/./c/../d')", "expected": "/a/b/d" },
+      { "call": "normalize_path('///')", "expected": "/" },
+      { "call": "normalize_path('/a/../../b')", "expected": "/b" }
+    ]
   }
 ]
