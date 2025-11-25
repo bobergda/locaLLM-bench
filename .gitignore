@@ -16,6 +16,7 @@ venv/
 results.json
 report.csv
 report.md
+artifacts/
 
 # Logs
 *.log

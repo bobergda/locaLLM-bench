@@ -1,14 +1,30 @@
 [
   {
-    "prompt": "Python: write a function sum_even(nums: list[int]) that returns the sum of even integers.",
-    "contains_all": ["def sum_even", "return", "if n % 2 == 0"]
+    "prompt": "Python: write a function sum_even(nums: list[int]) that returns the sum of even integers. Return only the function code.",
+    "code_tests": [
+      { "call": "sum_even([1, 2, 3, 4])", "expected": 6 },
+      { "call": "sum_even([])", "expected": 0 }
+    ]
   },
   {
-    "prompt": "Fix the bug: def add(a,b): return a - b",
-    "contains_any": ["return a + b", "return b + a"]
+    "prompt": "Fix the bug: def add(a,b): return a - b. Return only the corrected function code.",
+    "code_tests": [
+      { "call": "add(2, 3)", "expected": 5 },
+      { "call": "add(-1, 1)", "expected": 0 }
+    ]
   },
   {
-    "prompt": "In one sentence, explain what a unit test is.",
-    "expected": "A unit test checks a small piece of code in isolation to verify it behaves as expected."
+    "prompt": "Write a Python function add_one(x: int) -> int that returns x + 1. Return only the function code.",
+    "code_tests": [
+      { "call": "add_one(0)", "expected": 1 },
+      { "call": "add_one(41)", "expected": 42 }
+    ]
+  },
+  {
+    "prompt": "Provide Python code for a function is_palindrome(s: str) that returns True if s reads the same forwards and backwards, ignoring case and spaces. Return only the function code.",
+    "code_tests": [
+      { "call": "is_palindrome('Kajak')", "expected": true },
+      { "call": "is_palindrome('test')", "expected": false }
+    ]
   }
 ]
