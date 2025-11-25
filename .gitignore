@@ -1,0 +1,18 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Benchmark outputs
+results.json
+report.csv
+report.md

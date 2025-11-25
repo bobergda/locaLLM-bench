@@ -1,0 +1,14 @@
+[
+  {
+    "prompt": "Python: write a function sum_even(nums: list[int]) that returns the sum of even integers.",
+    "contains_all": ["def sum_even", "return", "if n % 2 == 0"]
+  },
+  {
+    "prompt": "Fix the bug: def add(a,b): return a - b",
+    "contains_any": ["return a + b", "return b + a"]
+  },
+  {
+    "prompt": "In one sentence, explain what a unit test is.",
+    "expected": "A unit test checks a small piece of code in isolation to verify it behaves as expected."
+  }
+]

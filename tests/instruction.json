@@ -1,0 +1,14 @@
+[
+  {
+    "prompt": "Write a single sentence that explains what a local LLM benchmark is.",
+    "expected": "A local LLM benchmark measures how well and how fast language models run on your own machine."
+  },
+  {
+    "prompt": "List three short bullet points describing how to install Ollama on Linux.",
+    "contains_all": ["curl", "install", "systemctl"]
+  },
+  {
+    "prompt": "Respond in Polish with one sentence describing the purpose of this benchmark.",
+    "contains_any": ["benchmark", "porównuje", "modele", "lokalnie"]
+  }
+]
