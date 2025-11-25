@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-import requests
+import ollama
 import yaml
 
 
@@ -41,17 +41,15 @@ def load_tests(tests_dir: Path) -> Dict[str, List[Dict[str, Any]]]:
     return test_sets
 
 
-def call_ollama(model: str, prompt: str, host: str, logger: logging.Logger) -> Dict[str, Any]:
+def call_ollama(model: str, prompt: str, client: ollama.Client, logger: logging.Logger) -> Dict[str, Any]:
     payload = {"model": model, "prompt": prompt, "stream": False}
     start = time.perf_counter()
     logger.info("Calling model=%s", model)
     logger.debug("Request payload: %s", payload)
-    response = requests.post(f"{host}/api/generate", json=payload, timeout=120)
+    data = client.generate(**payload)
     elapsed = time.perf_counter() - start
-    response.raise_for_status()
-    data = response.json()
     logger.info("Completed model=%s in %.2fs", model, elapsed)
-    logger.debug("Raw response: %s", data)
+    #logger.debug("Raw response: %s", data)
     return {
         "response": data.get("response", ""),
         "eval_count": data.get("eval_count"),
@@ -64,36 +62,48 @@ def run_benchmark(config_path: Path, debug: bool = False) -> List[Dict[str, Any]
     cfg = load_config(config_path)
     tests_dir = Path(cfg.get("tests_dir", "tests"))
     host = cfg.get("ollama_host", "http://localhost:11434")
-    models = cfg.get("models", [])
     debug_mode = bool(cfg.get("debug", debug))
-    logger.info("Loaded config: host=%s, models=%s, tests_dir=%s", host, models, tests_dir)
+    models = cfg.get("models", [])
+    debug_models = cfg.get("debug_models") or []
+    models_to_run = debug_models if debug_mode and debug_models else models
+    debug_categories = cfg.get("debug_categories") or []
+    debug_task_limit = cfg.get("debug_task_limit")
+    logger.info(
+        "Loaded config: host=%s, models=%s, tests_dir=%s, debug=%s",
+        host,
+        models_to_run,
+        tests_dir,
+        debug_mode,
+    )
 
     test_sets = load_tests(tests_dir)
     logger.info("Loaded test sets: %s", list(test_sets.keys()))
+    client = ollama.Client(host=host)
 
     results: List[Dict[str, Any]] = []
-    for model_idx, model in enumerate(models):
-        if debug_mode and model_idx > 0:
-            logger.debug("Debug mode: limiting to first model only")
-            break
+    for model in models_to_run:
         logger.info("Starting model: %s", model)
-        for category_idx, (category, tasks) in enumerate(test_sets.items()):
-            if debug_mode and category_idx > 0:
-                logger.debug("Debug mode: limiting to first category only")
-                break
+        for category, tasks in test_sets.items():
+            if debug_mode and debug_categories and category not in debug_categories:
+                logger.debug("Debug mode: skipping category %s", category)
+                continue
             logger.info("  Category: %s (%d tasks)", category, len(tasks))
-            for idx, task in enumerate(tasks):
-                if debug_mode and idx > 0:
-                    logger.debug("Debug mode: limiting to first task only")
-                    break
+            tasks_iter = tasks
+            if debug_mode and debug_task_limit:
+                tasks_iter = tasks[: int(debug_task_limit)]
+                logger.debug("Debug mode: limiting to first %s task(s) in %s", debug_task_limit, category)
+            for idx, task in enumerate(tasks_iter):
                 prompt = task["prompt"]
                 logger.debug("Prompt: %s", prompt)
                 meta = {k: v for k, v in task.items() if k != "prompt"}
                 try:
-                    result = call_ollama(model, prompt, host, logger)
-                except requests.RequestException as exc:
+                    result = call_ollama(model, prompt, client, logger)
+                except Exception as exc:
                     logger.error("Request failed for model=%s category=%s task=%d: %s", model, category, idx, exc)
                     result = {"error": str(exc)}
+                if debug_mode and "response" in result:
+                    text = (result.get("response") or "").strip()
+                    logger.debug("Response [model=%s, cat=%s, task=%d]:\n%s", model, category, idx, text)
                 results.append(
                     {
                         "model": model,
