@@ -6,6 +6,6 @@ models:
   - "qwen3:8b"
 tests_dir: "tests"
 debug: true
-debug_models: [ "qwen3:14b", "qwen3:8b"]
+debug_models: [ "qwen3:14b"]
 debug_categories: [ "code" ]
 debug_task_limit: 2
