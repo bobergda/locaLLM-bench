@@ -32,6 +32,3 @@ Każdy wpis: `prompt` oraz klucze scoringu:
 
 ## Zasady komunikacji
 - Pisz kod i dokumentację po angielsku; rozmowa po polsku.
-- Przy zmianach istniejących plików pokazuj tylko nowe/zmienione fragmenty, bez przepisywania całych plików jeśli nie trzeba.
-- Przy nowych plikach dawaj pełną zawartość z informacją „Zapisz to jako: NAZWA_PLIKU”.
-- Unikaj gadania – najpierw konkretny kod/treść, potem krótki komentarz, wskazuj pliki.
