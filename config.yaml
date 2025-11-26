@@ -8,4 +8,4 @@ tests_dir: "tests"
 debug: true
 debug_models: [ "qwen3:14b"]
 debug_categories: [ "code" ]
-debug_task_limit: 2
+#debug_task_limit: 5
