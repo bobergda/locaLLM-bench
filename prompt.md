@@ -1,34 +1,31 @@
-# LocaLLM Bench – Notatka operacyjna
+# LocaLLM Bench – Ops Note
 
-## Cel
-Minimalny benchmark lokalnych modeli LLM przez Ollamę: porównanie jakości i czasu odpowiedzi na prostych zestawach zadań (instrukcje, kod z auto-testami, logika, PL), zapis surowych wyników oraz raport z accuracy i metrykami pomocniczymi.
+## Goal
+Minimal benchmark of local LLMs via Ollama: compare quality and response time on simple task sets (instructions, code with auto-tests, logic, PL), save raw results, and generate a report with accuracy and helper metrics.
 
-## Stan projektu
+## Project Status
 - Runtime: Python 3.12.
-- Połączenie: biblioteka `ollama` (`client.generate(stream=False)`), host z `config.yaml`.
-- Pliki kluczowe: `runner.py`, `metrics.py`, `report.py`, `config.yaml`, `tests/*.json`.
-- Start: `start.sh` (menu: install, benchmark, raport) lub bezpośrednio `.venv/bin/python runner.py`.
-- Debug wspierany z configu (`debug`, `debug_models`, `debug_categories`, `debug_task_limit`); logi do stdout i `runner.log`.
+- Connection: `ollama` library (`client.generate(stream=False)`), host set in `config.yaml`.
+- Key files: `runner.py`, `metrics.py`, `report.py`, `config.yaml`, `tests/*.json`.
+- Start: `start.sh` (menu: install, benchmark, report) or directly `.venv/bin/python runner.py`.
+- Debug supported via config (`debug`, `debug_models`, `debug_categories`, `debug_task_limit`); logs go to stdout and `runner.log`.
 
 ## Workflow
-1) Instalacja: `bash install.sh` (tworzy `.venv`, instaluje z `requirements.txt`).
-2) Uruchomienie: `bash start.sh` → opcja 2 (benchmark) lub 3 (raport). Możesz też: `.venv/bin/python runner.py`.
-3) Debug: ustaw `debug: true` w `config.yaml` i opcjonalnie `debug_models`/`debug_categories`/`debug_task_limit`; runner loguje odpowiedzi modeli dla szybkiego sprawdzenia.
-4) Raport: po `runner.py` uruchom `report.py` – generuje `report.md` (tabelki Markdown), liczy accuracy, metrykę `contains_all`, statystyki auto-testów kodu, zapisuje wycięte fragmenty kodu do `artifacts/`.
+1) Install: `bash install.sh` (creates `.venv`, installs from `requirements.txt`).
+2) Run: `bash start.sh` → option 2 (benchmark) or 3 (report). You can also run `.venv/bin/python runner.py`.
+3) Debug: set `debug: true` in `config.yaml` and optionally `debug_models`/`debug_categories`/`debug_task_limit`; runner logs model responses for quick inspection.
+4) Report: after `runner.py` run `report.py` – it generates `report.md` (Markdown tables), computes accuracy, the `contains_all` metric, code auto-test stats, and saves extracted code snippets to `artifacts/`.
 
-## Konfiguracja (`config.yaml`)
-- `ollama_host`: URL do instancji Ollama.
-- `models`: lista modeli do pełnego biegu.
-- `tests_dir`: katalog z zestawami JSON (`instruction.json`, `code.json`, `polish.json`, ...).
-- Debug: `debug` (bool), `debug_models`, `debug_categories`, `debug_task_limit` (liczba zadań/kategorię).
+## Configuration (`config.yaml`)
+- `ollama_host`: URL to the Ollama instance.
+- `models`: list of models for full runs.
+- `tests_dir`: directory with JSON sets (`instruction.json`, `code.json`, `polish.json`, ...).
+- Debug: `debug` (bool), `debug_models`, `debug_categories`, `debug_task_limit` (number of tasks per category).
 
-## Testy wejściowe (`tests/*.json`)
-Każdy wpis: `prompt` oraz klucze scoringu:
-- `expected` (exact), `contains_all`, `contains_any`, `asserts` (alias na contains_all), `code_tests` (lista testów: `call`, `expected`; uruchamiane na wygenerowanym kodzie).
+## Input Tests (`tests/*.json`)
+Each entry: `prompt` plus scoring keys:
+- `expected` (exact), `contains_all`, `contains_any`, `asserts` (alias for contains_all), `code_tests` (list of tests: `call`, `expected`; run on the generated code).
 
-## Scoring i raport
-- `metrics.py`: `score_task` łączy kryteria (exact/contains_all/contains_any/asserts) i umie odpalić proste `code_tests` na wyciętym kodzie (wyodrębnianie z bloków ```python).
-- `report.py`: wczytuje `results.json`, liczy accuracy per model/kategoria oraz overall, podsumowuje `contains_all` i `code_tests`, zapisuje kod do `artifacts/*.py`, wypisuje błędy sieci/wykonania.
-
-## Zasady komunikacji
-- Pisz kod i dokumentację po angielsku; rozmowa po polsku.
+## Scoring and Report
+- `metrics.py`: `score_task` combines criteria (exact/contains_all/contains_any/asserts) and can run simple `code_tests` on extracted code (pulled from ```python blocks).
+- `report.py`: reads `results.json`, computes accuracy per model/category and overall, summarizes `contains_all` and `code_tests`, saves code to `artifacts/*.py`, and prints network/runtime errors.
