@@ -1,7 +1,7 @@
 # LocaLLM Bench – Ops Note
 
 ## Goal
-Minimal benchmark of local LLMs via Ollama: compare quality and response time on simple task sets (instructions, code with auto-tests, logic, PL), save raw results, and generate a report with accuracy and helper metrics.
+Minimal benchmark of local LLMs via Ollama: compare quality and response time on simple task sets (instructions, code with auto-tests, PL), save raw results, and generate a report with accuracy and helper metrics.
 
 ## Project Status
 - Runtime: Python 3.12.
@@ -24,8 +24,8 @@ Minimal benchmark of local LLMs via Ollama: compare quality and response time on
 
 ## Input Tests (`tests/*.json`)
 Each entry: `prompt` plus scoring keys:
-- `expected` (exact), `contains_all`, `contains_any`, `asserts` (alias for contains_all), `code_tests` (list of tests: `call`, `expected`; run on the generated code).
+- `expected` (exact), `contains_all`, `contains_any`, `asserts` (alias for contains_all), `code_tests` (list of tests as `call`/`expected` or `assert`; run on the generated code).
 
 ## Scoring and Report
 - `metrics.py`: `score_task` combines criteria (exact/contains_all/contains_any/asserts) and can run simple `code_tests` on extracted code (pulled from ```python blocks).
-- `report.py`: reads `results.json`, computes accuracy per model/category and overall, summarizes `contains_all` and `code_tests`, saves code to `artifacts/*.py`, and prints network/runtime errors.
+- `report.py`: reads `results.json`, computes accuracy per model/category (all criteria) and overall (exact/contains_any/contains_all), summarizes `contains_all` and `code_tests`, saves code to `artifacts/*.py`, and prints network/runtime errors.
