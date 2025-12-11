@@ -71,6 +71,21 @@ def run_code_tests_verbose(output: str, tests: List[Dict[str, Any]]) -> bool:
         return False
     all_ok = True
     for test in tests:
+        if "assert" in test:
+            expr = test.get("assert")
+            if not expr:
+                print("  missing assert expression (FAIL)")
+                all_ok = False
+                continue
+            try:
+                result = bool(eval(expr, namespace))
+                print(f"  assert {expr} ({'OK' if result else 'FAIL'})")
+                if not result:
+                    all_ok = False
+            except Exception as exc:
+                print(f"  {expr} raised {exc} (FAIL)")
+                all_ok = False
+            continue
         expr = test.get("call")
         expected = test.get("expected")
         if not expr:

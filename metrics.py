@@ -27,10 +27,17 @@ def extract_python_code(text: str) -> str:
     return text.strip()
 
 
+def _eval_assert(namespace: Dict[str, Any], expr: str) -> bool:
+    try:
+        return bool(eval(expr, namespace))
+    except Exception:
+        return False
+
+
 def run_code_tests(output: str, tests: List[Dict[str, Any]]) -> bool:
     """
-    Execute model-produced code and run simple call/expected checks.
-    Each test dict should have keys: call (str expression) and expected (value).
+    Execute model-produced code and run simple assert-style checks.
+    Tests can be provided as {"assert": "expr"} or legacy {"call": "...", "expected": value}.
     """
     code = extract_python_code(output)
     if not code:
@@ -41,6 +48,11 @@ def run_code_tests(output: str, tests: List[Dict[str, Any]]) -> bool:
     except Exception:
         return False
     for test in tests:
+        if "assert" in test:
+            expr = test.get("assert")
+            if not expr or not _eval_assert(namespace, expr):
+                return False
+            continue
         expr = test.get("call")
         expected = test.get("expected")
         if not expr:
