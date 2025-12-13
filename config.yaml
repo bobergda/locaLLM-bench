@@ -17,7 +17,7 @@ debug: true
 # Which models to run in debug mode (overrides all models).
 debug_models: [ "qwen3:14b"]
 # Which test sets to run in debug mode (overrides all test sets).
-debug_test_sets: [ "code" ]
+debug_test_sets: [ "bober_last_exam" ]
 # Limit number of tasks per test set in debug mode (null = no limit).
 debug_task_limit: 1
 
