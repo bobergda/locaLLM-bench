@@ -1,31 +1,47 @@
-# LocaLLM Bench – Ops Note
+# AGENTS.md — agent instructions
 
-## Goal
-Minimal benchmark of local LLMs via Ollama: compare quality and response time on simple task sets (instructions, code with auto-tests, PL), save raw results, and generate a report with accuracy and helper metrics.
+This file defines how coding agents (e.g., Codex/LLMs) should work in **LocaLLM Bench**. The goal is fast, repeatable benchmarking of Ollama-served models, plus stable scoring and reporting.
 
-## Project Status
-- Runtime: Python 3.12.
-- Connection: `ollama` library (`client.generate(stream=False)`), host set in `config.yaml`.
-- Key files: `runner.py`, `metrics.py`, `report.py`, `config.yaml`, `tests/*.json`.
-- Start: `start.sh` (menu: install, benchmark, report) or directly `.venv/bin/python runner.py`.
-- Debug supported via config (`debug`, `debug_models`, `debug_categories`, `debug_task_limit`); logs go to stdout and `runner.log`.
+## What this project is
+- A minimal harness to benchmark local LLMs via Ollama: compares output quality and response time on simple task sets.
+- Saves raw results (`results.json`) and generates a report (`report.md`) with accuracy and helper metrics.
 
-## Workflow
-1) Install: `bash install.sh` (creates `.venv`, installs from `requirements.txt`).
-2) Run: `bash start.sh` → option 2 (benchmark) or 3 (report). You can also run `.venv/bin/python runner.py`.
-3) Debug: set `debug: true` in `config.yaml` and optionally `debug_models`/`debug_categories`/`debug_task_limit`; runner logs model responses for quick inspection.
-4) Report: after `runner.py` run `report.py` – it generates `report.md` (Markdown tables), computes accuracy, the `contains_all` metric, code auto-test stats, and saves extracted code snippets to `artifacts/`.
+## Quick start (commands)
+- Install: `bash install.sh` (creates `.venv`, installs from `requirements.txt`)
+- Benchmark: `bash start.sh` → option 2, or `python3 runner.py` / `.venv/bin/python runner.py`
+- Report: `python3 report.py` / `.venv/bin/python report.py`
 
-## Configuration (`config.yaml`)
-- `ollama_host`: URL to the Ollama instance.
-- `models`: list of models for full runs.
-- `tests_dir`: directory with JSON sets (`instruction.json`, `code.json`, `polish.json`, ...).
-- Debug: `debug` (bool), `debug_models`, `debug_categories`, `debug_task_limit` (number of tasks per category).
+## Repo map (key files)
+- `config.yaml` — Ollama host, model list, tests directory, debug options.
+- `runner.py` — runs tasks, calls `ollama` (`client.generate(stream=False)`), writes `results.json` and logs.
+- `metrics.py` — scoring (`expected`, `contains_all`, `contains_any`, `asserts`) + optional `code_tests`.
+- `report.py` — aggregates `results.json` into `report.md`, saves extracted snippets into `artifacts/`.
+- `tests/*.json` — task definitions and scoring keys.
 
-## Input Tests (`tests/*.json`)
-Each entry: `prompt` plus scoring keys:
-- `expected` (exact), `contains_all`, `contains_any`, `asserts` (alias for contains_all), `code_tests` (list of tests as `call`/`expected` or `assert`; run on the generated code).
+## Test format (`tests/*.json`)
+Each entry is an object with `prompt` plus optional scoring keys:
+- `expected` — exact match (after `strip()`).
+- `contains_all` / `asserts` — all phrases must be present (case-insensitive).
+- `contains_any` — any phrase is sufficient.
+- `code_tests` — tests executed against code extracted from the model output (prefer ```python fenced blocks).
+  - Format: `{"assert": "expr"}` or legacy `{"call": "expr", "expected": ...}`.
 
-## Scoring and Report
-- `metrics.py`: `score_task` combines criteria (exact/contains_all/contains_any/asserts) and can run simple `code_tests` on extracted code (pulled from ```python blocks).
-- `report.py`: reads `results.json`, computes accuracy per model/category (all criteria) and overall (exact/contains_any/contains_all), summarizes `contains_all` and `code_tests`, saves code to `artifacts/*.py`, and prints network/runtime errors.
+## Critical security (code execution)
+- `metrics.py:run_code_tests()` and `report.py:run_code_tests_verbose()` use `exec()` and `eval()` on model-generated code.
+- Do not run benchmarks/reports on **untrusted** `results.json` or prompts that may induce malicious code.
+- If you change `code_tests`, do not expand the attack surface (e.g., avoid adding “convenience” system imports, file/network access, or shell execution).
+
+## Change rules (best practices)
+- Keep changes minimal and intentional; avoid drive-by refactors.
+- Preserve the `results.json` schema (any format change must update `report.py` and be documented in `README.md`).
+- Don’t add dependencies without a clear reason; if you do, update `requirements.txt` and keep Python 3.12 compatibility.
+- Keep metrics/reporting deterministic for the same `results.json`.
+- Treat `tests/*.json` as an API: keep backward compatibility or migrate all files consistently.
+
+## Debugging and cost control
+- Use `config.yaml`: `debug`, `debug_models`, `debug_categories`, `debug_task_limit`.
+- Prefer small, fast runs (task limits) during iteration.
+
+## How to validate changes
+- Minimum: `python3 -m py_compile runner.py metrics.py report.py`
+- Quick smoke test: set `debug_task_limit: 1`, run `python3 runner.py`, then `python3 report.py`
