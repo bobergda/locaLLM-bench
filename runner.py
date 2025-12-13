@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List
@@ -8,26 +9,17 @@ import ollama
 import yaml
 
 
-class ResultStreamer:
-    """Stream results into a JSON array so progress is saved during the run."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._fh = path.open("w", encoding="utf-8")
-        self._fh.write("[\n")
-        self._first = True
-
-    def write(self, row: Dict[str, Any]) -> None:
-        if not self._first:
-            self._fh.write(",\n")
-        json.dump(row, self._fh, ensure_ascii=False)
-        self._fh.flush()
-        self._first = False
-
-    def close(self) -> None:
-        self._fh.write("\n]\n")
-        self._fh.flush()
-        self._fh.close()
+def save_results_atomic(results: List[Dict[str, Any]], path: Path) -> None:
+    """
+    Rewrite the entire results file after each response.
+    This keeps results.json always valid JSON even if the run is interrupted.
+    """
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, path)
 
 
 def setup_logger(log_path: Path, debug: bool = False) -> logging.Logger:
@@ -103,51 +95,43 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
     client = ollama.Client(host=host)
 
     results: List[Dict[str, Any]] = []
-    streamer = ResultStreamer(stream_path) if stream_path else None
-    try:
-        for model in models_to_run:
-            logger.info("Starting model: %s", model)
-            for category, tasks in test_sets.items():
-                if debug_mode and debug_categories and category not in debug_categories:
-                    logger.debug("Debug mode: skipping category %s", category)
-                    continue
-                logger.info("  Category: %s (%d tasks)", category, len(tasks))
-                tasks_iter = tasks
-                if debug_mode and debug_task_limit:
-                    tasks_iter = tasks[: int(debug_task_limit)]
-                    logger.debug("Debug mode: limiting to first %s task(s) in %s", debug_task_limit, category)
-                for idx, task in enumerate(tasks_iter):
-                    prompt = task["prompt"]
-                    logger.debug("Prompt: %s", prompt)
-                    meta = {k: v for k, v in task.items() if k != "prompt"}
-                    try:
-                        result = call_ollama(model, prompt, client, logger)
-                    except Exception as exc:
-                        logger.error("Request failed for model=%s category=%s task=%d: %s", model, category, idx, exc)
-                        result = {"error": str(exc)}
-                    if debug_mode and "response" in result:
-                        text = (result.get("response") or "").strip()
-                        logger.debug("Response [model=%s, cat=%s, task=%d]:\n%s", model, category, idx, text)
-                    row = {
-                        "model": model,
-                        "category": category,
-                        "task_id": idx,
-                        "prompt": prompt,
-                        **meta,
-                        **result,
-                    }
-                    results.append(row)
-                    if streamer:
-                        streamer.write(row)
-    finally:
-        if streamer:
-            streamer.close()
+    if stream_path:
+        save_results_atomic(results, stream_path)
+    for model in models_to_run:
+        logger.info("Starting model: %s", model)
+        for category, tasks in test_sets.items():
+            if debug_mode and debug_categories and category not in debug_categories:
+                logger.debug("Debug mode: skipping category %s", category)
+                continue
+            logger.info("  Category: %s (%d tasks)", category, len(tasks))
+            tasks_iter = tasks
+            if debug_mode and debug_task_limit:
+                tasks_iter = tasks[: int(debug_task_limit)]
+                logger.debug("Debug mode: limiting to first %s task(s) in %s", debug_task_limit, category)
+            for idx, task in enumerate(tasks_iter):
+                prompt = task["prompt"]
+                logger.debug("Prompt: %s", prompt)
+                meta = {k: v for k, v in task.items() if k != "prompt"}
+                try:
+                    result = call_ollama(model, prompt, client, logger)
+                except Exception as exc:
+                    logger.error("Request failed for model=%s category=%s task=%d: %s", model, category, idx, exc)
+                    result = {"error": str(exc)}
+                if debug_mode and "response" in result:
+                    text = (result.get("response") or "").strip()
+                    logger.debug("Response [model=%s, cat=%s, task=%d]:\n%s", model, category, idx, text)
+                row = {
+                    "model": model,
+                    "category": category,
+                    "task_id": idx,
+                    "prompt": prompt,
+                    **meta,
+                    **result,
+                }
+                results.append(row)
+                if stream_path:
+                    save_results_atomic(results, stream_path)
     return results
-
-
-def save_results(results: List[Dict[str, Any]], path: Path) -> None:
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
@@ -158,4 +142,5 @@ if __name__ == "__main__":
     logger.info("Starting benchmark run%s", " (debug)" if debug_flag else "")
     output_path = Path("results.json")
     results = run_benchmark(config_file, debug=debug_flag, stream_path=output_path)
+    save_results_atomic(results, output_path)
     logger.info("Saved %d results to %s", len(results), output_path)
