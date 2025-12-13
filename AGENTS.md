@@ -39,7 +39,7 @@ Each entry is an object with `prompt` plus optional scoring keys:
 - Treat `tests/*.json` as an API: keep backward compatibility or migrate all files consistently.
 
 ## Debugging and cost control
-- Use `config.yaml`: `debug`, `debug_models`, `debug_categories`, `debug_task_limit`.
+- Use `config.yaml`: `debug`, `debug_models`, `debug_test_sets`, `debug_task_limit`.
 - Prefer small, fast runs (task limits) during iteration.
 
 ## How to validate changes

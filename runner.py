@@ -89,7 +89,7 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
     models = cfg.get("models", [])
     debug_models = cfg.get("debug_models") or []
     models_to_run = debug_models if debug_mode and debug_models else models
-    debug_categories = cfg.get("debug_categories") or []
+    debug_test_sets = cfg.get("debug_test_sets") or []
     debug_task_limit = cfg.get("debug_task_limit")
     gen_options = cfg.get("generate_options") or {}
     schema_version = int(cfg.get("results_schema_version", 1))
@@ -108,19 +108,17 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
     client = ollama.Client(host=host)
 
     results: List[Dict[str, Any]] = []
-    if stream_path:
-        save_results_atomic(results, stream_path)
     for model in models_to_run:
         logger.info("Starting model: %s", model)
-        for category, tasks in test_sets.items():
-            if debug_mode and debug_categories and category not in debug_categories:
-                logger.debug("Debug mode: skipping category %s", category)
+        for test_set, tasks in test_sets.items():
+            if debug_mode and debug_test_sets and test_set not in debug_test_sets:
+                logger.debug("Debug mode: skipping test_set %s", test_set)
                 continue
-            logger.info("  Category: %s (%d tasks)", category, len(tasks))
+            logger.info("  Test set: %s (%d tasks)", test_set, len(tasks))
             tasks_iter = tasks
             if debug_mode and debug_task_limit:
                 tasks_iter = tasks[: int(debug_task_limit)]
-                logger.debug("Debug mode: limiting to first %s task(s) in %s", debug_task_limit, category)
+                logger.debug("Debug mode: limiting to first %s task(s) in %s", debug_task_limit, test_set)
             for idx, task in enumerate(tasks_iter):
                 prompt = task["prompt"]
                 logger.debug("Prompt: %s", prompt)
@@ -128,11 +126,11 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
                 try:
                     result = call_ollama(model, prompt, client, logger, gen_options=gen_options)
                 except Exception as exc:
-                    logger.error("Request failed for model=%s category=%s task=%d: %s", model, category, idx, exc)
+                    logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, idx, exc)
                     result = {"error": str(exc)}
                 if debug_mode and "response" in result:
                     text = (result.get("response") or "").strip()
-                    logger.debug("Response [model=%s, cat=%s, task=%d]:\n%s", model, category, idx, text)
+                    logger.debug("Response [model=%s, test_set=%s, task=%d]:\n%s", model, test_set, idx, text)
                 row = {
                     "results_schema_version": schema_version,
                     "run_id": run_id,
@@ -140,7 +138,7 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
                     "ollama_host": host,
                     "generate_options": gen_options,
                     "model": model,
-                    "category": category,
+                    "test_set": test_set,
                     "task_id": idx,
                     "prompt": prompt,
                     **meta,

@@ -29,23 +29,23 @@ def load_results(path: Path) -> List[Dict]:
 
 
 def format_markdown_table(accuracies: Dict[str, Dict[str, float]], overall: Dict[str, float]) -> str:
-    categories = sorted({cat for model_data in accuracies.values() for cat in model_data})
-    header = ["Model"] + categories + ["Overall"]
+    test_sets = sorted({name for model_data in accuracies.values() for name in model_data})
+    header = ["Model"] + test_sets + ["Overall"]
     lines = ["|" + "|".join(header) + "|", "|" + "|".join(["---"] * len(header)) + "|"]
     for model, cats in accuracies.items():
-        row = [model] + [f"{cats.get(cat, 0.0):.2f}" for cat in categories] + [f"{overall.get(model, 0.0):.2f}"]
+        row = [model] + [f"{cats.get(name, 0.0):.2f}" for name in test_sets] + [f"{overall.get(model, 0.0):.2f}"]
         lines.append("|" + "|".join(row) + "|")
     return "\n".join(lines)
 
 
 def format_contains_all_table(stats: Dict[str, Dict[str, Tuple[int, int]]]) -> str:
-    categories = sorted({cat for model_data in stats.values() for cat in model_data})
-    header = ["Model"] + categories
+    test_sets = sorted({name for model_data in stats.values() for name in model_data})
+    header = ["Model"] + test_sets
     lines = ["|" + "|".join(header) + "|", "|" + "|".join(["---"] * len(header)) + "|"]
     for model, cats in stats.items():
         row_vals = []
-        for cat in categories:
-            passed, total = cats.get(cat, (0, 0))
+        for name in test_sets:
+            passed, total = cats.get(name, (0, 0))
             ratio = 0 if total == 0 else passed / total
             row_vals.append(f"{passed}/{total} ({ratio:.2f})")
         lines.append("|" + "|".join([model] + row_vals) + "|")
@@ -65,13 +65,13 @@ def compute_contains_all_stats(results: List[Dict]) -> Dict[str, Dict[str, Tuple
         if not parts:
             continue
         model = row["model"]
-        category = row["category"]
+        test_set = row["test_set"]
         output = row.get("response", "")
         is_ok = score_contains_all(output, parts)
         if model not in stats:
             stats[model] = {}
-        passed, total = stats[model].get(category, (0, 0))
-        stats[model][category] = (passed + (1 if is_ok else 0), total + 1)
+        passed, total = stats[model].get(test_set, (0, 0))
+        stats[model][test_set] = (passed + (1 if is_ok else 0), total + 1)
     return stats
 
 
@@ -82,15 +82,15 @@ def save_code_artifacts(results: List[Dict], output_dir: Path) -> int:
         resp = row.get("response")
         if not resp:
             continue
-        category = row.get("category", "")
-        if category != "code" and "```" not in resp:
+        test_set = row.get("test_set", "")
+        if test_set != "code" and "```" not in resp:
             continue
         model = row.get("model", "unknown")
         task_id = row.get("task_id", 0)
         code = extract_python_code(resp)
         if not code:
             continue
-        filename = f"{model}_{category}_task{task_id}.py".replace("/", "_").replace(":", "_")
+        filename = f"{model}_{test_set}_task{task_id}.py".replace("/", "_").replace(":", "_")
         (output_dir / filename).write_text(code, encoding="utf-8")
         saved += 1
     return saved
@@ -133,7 +133,8 @@ def collect_errors(results: List[Dict], limit: int = 5) -> List[str]:
     errors = []
     for row in results:
         if row.get("error"):
-            errors.append(f"{row.get('model','?')} / {row.get('category','?')} / task {row.get('task_id','?')}: {row.get('error')}")
+            test_set = row.get("test_set", "?")
+            errors.append(f"{row.get('model','?')} / {test_set} / task {row.get('task_id','?')}: {row.get('error')}")
             if len(errors) >= limit:
                 break
     return errors
@@ -152,14 +153,14 @@ def compute_code_test_stats(
         if not tests or row.get("error"):
             continue
         model = row["model"]
-        category = row["category"]
+        test_set = row["test_set"]
         ok = run_code_tests(row.get("response", ""), tests, timeout_s=code_test_timeout_s)
         if not ok and len(failures) < limit_failures:
-            failures.append(f"{model}/{category}/task{row.get('task_id','?')} failed code tests")
+            failures.append(f"{model}/{test_set}/task{row.get('task_id','?')} failed code tests")
         if model not in stats:
             stats[model] = {}
-        passed, total = stats[model].get(category, (0, 0))
-        stats[model][category] = (passed + (1 if ok else 0), total + 1)
+        passed, total = stats[model].get(test_set, (0, 0))
+        stats[model][test_set] = (passed + (1 if ok else 0), total + 1)
     return stats, failures
 
 
@@ -202,7 +203,7 @@ def main() -> None:
     saved_codes = save_code_artifacts(results, Path("artifacts"))
     errors = collect_errors(results)
     models = sorted({r["model"] for r in results})
-    categories = sorted({r["category"] for r in results})
+    test_sets = sorted({r.get("test_set") for r in results if r.get("test_set")})
     total = len(results)
     error_count = sum(1 for r in results if r.get("error"))
 
@@ -211,7 +212,7 @@ def main() -> None:
         f.write("# Benchmark Report\n\n")
         f.write("## Summary\n\n")
         f.write(f"- Models: {', '.join(models)}\n")
-        f.write(f"- Categories: {', '.join(categories)}\n")
+        f.write(f"- Test sets: {', '.join(test_sets)}\n")
         f.write(f"- Total results: {total} (errors: {error_count})\n")
         f.write(f"- Extracted Python snippets: {saved_codes} file(s) in artifacts/\n\n")
         f.write(f"- Code execution for code_tests: {'ENABLED' if allow_code_exec else 'DISABLED'}\n")

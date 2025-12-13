@@ -134,10 +134,10 @@ def compute_accuracy(
 
     for row in results:
         model = row["model"]
-        category = row["category"]
+        test_set = row["test_set"]
         output = row.get("response", "")
         if row.get("error"):
-            totals[model][category] += 1
+            totals[model][test_set] += 1
             continue
         task = {
             "expected": row.get("expected"),
@@ -154,16 +154,16 @@ def compute_accuracy(
             allow_code_exec=allow_code_exec,
             code_test_timeout_s=code_test_timeout_s,
         )
-        totals[model][category] += 1
+        totals[model][test_set] += 1
         if is_correct:
-            correct[model][category] += 1
+            correct[model][test_set] += 1
 
     accuracies: Dict[str, Dict[str, float]] = {}
-    for model, categories in totals.items():
+    for model, test_sets in totals.items():
         accuracies[model] = {}
-        for category, total in categories.items():
+        for test_set, total in test_sets.items():
             if total == 0:
-                accuracies[model][category] = 0.0
+                accuracies[model][test_set] = 0.0
             else:
-                accuracies[model][category] = correct[model][category] / total
+                accuracies[model][test_set] = correct[model][test_set] / total
     return accuracies

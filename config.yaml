@@ -7,7 +7,7 @@ models:
 tests_dir: "tests"
 debug: true
 debug_models: [ "qwen3:14b"]
-debug_categories: [ "code" ]
+debug_test_sets: [ "code" ]
 debug_task_limit: 1
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.
