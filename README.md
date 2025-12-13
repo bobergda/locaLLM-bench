@@ -24,11 +24,7 @@ A minimal harness to benchmark small local LLMs served by Ollama. It loads test 
 2. Add test files under `tests/` (examples in `tests/instruction.json`).
 3. Run:
 ```bash
-./start.sh
-```
-4. Generate a report:
-```bash
-.venv/bin/python report.py
+./run.sh
 ```
 
 Security note: code-based scoring (`code_tests`) executes model-produced code. Enable it only if you trust `results.json`:
