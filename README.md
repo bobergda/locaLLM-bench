@@ -28,8 +28,7 @@ A minimal harness to benchmark small local LLMs served by Ollama. It loads test 
 ```
 
 Security note: code-based scoring (`code_tests`) executes model-produced code. Enable it only if you trust `results.json`:
-- set `unsafe_code_exec: true` in `config.yaml`, or
-- run `python3 report.py --unsafe-code-exec`
+- set `unsafe_code_exec: true` in `config.yaml`
 
 ## Agent instructions
 - See `AGENTS.md` for the prompt/instructions used by a coding agent to work in this repo.

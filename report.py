@@ -1,4 +1,3 @@
-import argparse
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -339,44 +338,13 @@ def compute_code_test_stats(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate benchmark report from results.json")
-    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml (default: config.yaml)")
-    parser.add_argument(
-        "--unsafe-code-exec",
-        action="store_true",
-        help="Allow executing model-produced code for code_tests (overrides config).",
-    )
-    parser.add_argument(
-        "--verbose-code-tests",
-        action="store_true",
-        help="Print each code_tests assertion result to stdout (requires unsafe code exec).",
-    )
-    parser.add_argument(
-        "--fast-code-tests",
-        action="store_true",
-        help="Run code_tests inline without timeout (fast/unsafe; requires unsafe code exec).",
-    )
-    parser.add_argument(
-        "--code-test-timeout-s",
-        type=float,
-        default=None,
-        help="Timeout for code_tests execution (seconds); overrides config.",
-    )
-    args = parser.parse_args()
-
-    cfg = load_config(Path(args.config))
-    allow_code_exec = bool(cfg.get("unsafe_code_exec", False)) or bool(args.unsafe_code_exec)
-    verbose_code_tests = bool(cfg.get("report_verbose_code_tests", False)) or bool(args.verbose_code_tests)
+    cfg = load_config(Path("config.yaml"))
+    allow_code_exec = bool(cfg.get("unsafe_code_exec", False))
+    verbose_code_tests = bool(cfg.get("report_verbose_code_tests", False))
     code_test_mode = str(cfg.get("code_test_mode", "safe")).strip().lower()
-    if args.fast_code_tests:
-        code_test_mode = "fast"
     if code_test_mode not in ("safe", "fast"):
         raise ValueError("config.yaml: code_test_mode must be 'safe' or 'fast'")
-    code_test_timeout_s = (
-        float(args.code_test_timeout_s)
-        if args.code_test_timeout_s is not None
-        else float(cfg.get("code_test_timeout_s", DEFAULT_CODE_TEST_TIMEOUT_S))
-    )
+    code_test_timeout_s = float(cfg.get("code_test_timeout_s", DEFAULT_CODE_TEST_TIMEOUT_S))
 
     results_path = Path("results.json")
     if not results_path.exists():
