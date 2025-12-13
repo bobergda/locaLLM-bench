@@ -1,4 +1,4 @@
-# ollabench
+# locaLLM-bench
 
 ## Overview
 A minimal harness to benchmark small local LLMs served by Ollama. It loads test prompts, queries each model, and records raw responses and timings for later scoring and reporting.
