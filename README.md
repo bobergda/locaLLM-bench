@@ -12,7 +12,7 @@ A minimal harness to benchmark small local LLMs served by Ollama. It loads test 
 ## Requirements
 - Python 3.10+
 - Ollama running locally at `http://localhost:11434`
-- Python packages: `ollama`, `PyYAML`, `psutil`
+- Python packages: `ollama`, `PyYAML`
 
 ## Installation
 ```bash
@@ -31,7 +31,9 @@ A minimal harness to benchmark small local LLMs served by Ollama. It loads test 
 .venv/bin/python report.py
 ```
 
-Security note: `report.py --unsafe-code-exec` will execute model-produced code for `code_tests`. Only enable this if you trust the results file.
+Security note: code-based scoring (`code_tests`) executes model-produced code. Enable it only if you trust `results.json`:
+- set `unsafe_code_exec: true` in `config.yaml`, or
+- run `python3 report.py --unsafe-code-exec`
 
 ## Agent instructions
 - See `AGENTS.md` for the prompt/instructions used by a coding agent to work in this repo.

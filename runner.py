@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -55,8 +56,16 @@ def load_tests(tests_dir: Path) -> Dict[str, List[Dict[str, Any]]]:
     return test_sets
 
 
-def call_ollama(model: str, prompt: str, client: ollama.Client, logger: logging.Logger) -> Dict[str, Any]:
-    payload = {"model": model, "prompt": prompt, "stream": False}
+def call_ollama(
+    model: str,
+    prompt: str,
+    client: ollama.Client,
+    logger: logging.Logger,
+    gen_options: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"model": model, "prompt": prompt, "stream": False}
+    if gen_options:
+        payload["options"] = gen_options
     start = time.perf_counter()
     logger.info("Calling model=%s", model)
     logger.debug("Request payload: %s", payload)
@@ -82,6 +91,10 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
     models_to_run = debug_models if debug_mode and debug_models else models
     debug_categories = cfg.get("debug_categories") or []
     debug_task_limit = cfg.get("debug_task_limit")
+    gen_options = cfg.get("generate_options") or {}
+    schema_version = int(cfg.get("results_schema_version", 1))
+    run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    run_id = run_started_at
     logger.info(
         "Loaded config: host=%s, models=%s, tests_dir=%s, debug=%s",
         host,
@@ -113,7 +126,7 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
                 logger.debug("Prompt: %s", prompt)
                 meta = {k: v for k, v in task.items() if k != "prompt"}
                 try:
-                    result = call_ollama(model, prompt, client, logger)
+                    result = call_ollama(model, prompt, client, logger, gen_options=gen_options)
                 except Exception as exc:
                     logger.error("Request failed for model=%s category=%s task=%d: %s", model, category, idx, exc)
                     result = {"error": str(exc)}
@@ -121,6 +134,11 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
                     text = (result.get("response") or "").strip()
                     logger.debug("Response [model=%s, cat=%s, task=%d]:\n%s", model, category, idx, text)
                 row = {
+                    "results_schema_version": schema_version,
+                    "run_id": run_id,
+                    "run_started_at": run_started_at,
+                    "ollama_host": host,
+                    "generate_options": gen_options,
                     "model": model,
                     "category": category,
                     "task_id": idx,

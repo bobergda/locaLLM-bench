@@ -1,6 +1,10 @@
+import multiprocessing as mp
 import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List
+
+
+DEFAULT_CODE_TEST_TIMEOUT_S = 2.0
 
 
 def score_exact(output: str, expected: str) -> bool:
@@ -34,39 +38,68 @@ def _eval_assert(namespace: Dict[str, Any], expr: str) -> bool:
         return False
 
 
-def run_code_tests(output: str, tests: List[Dict[str, Any]]) -> bool:
-    """
-    Execute model-produced code and run simple assert-style checks.
-    Tests can be provided as {"assert": "expr"} or legacy {"call": "...", "expected": value}.
-    """
+def _run_code_tests_worker(output: str, tests: List[Dict[str, Any]], queue: Any) -> None:
     code = extract_python_code(output)
     if not code:
-        return False
+        queue.put(False)
+        return
     namespace: Dict[str, Any] = {}
     try:
         exec(code, namespace)
     except Exception:
-        return False
+        queue.put(False)
+        return
     for test in tests:
         if "assert" in test:
             expr = test.get("assert")
             if not expr or not _eval_assert(namespace, expr):
-                return False
+                queue.put(False)
+                return
             continue
         expr = test.get("call")
         expected = test.get("expected")
         if not expr:
-            return False
+            queue.put(False)
+            return
         try:
             value = eval(expr, namespace)
         except Exception:
-            return False
+            queue.put(False)
+            return
         if value != expected:
-            return False
-    return True
+            queue.put(False)
+            return
+    queue.put(True)
 
 
-def score_task(task: Dict[str, Any], output: str) -> bool:
+def run_code_tests(output: str, tests: List[Dict[str, Any]], timeout_s: float = DEFAULT_CODE_TEST_TIMEOUT_S) -> bool:
+    """
+    Execute model-produced code and run simple assert-style checks.
+    Tests can be provided as {"assert": "expr"} or legacy {"call": "...", "expected": value}.
+    """
+    ctx = mp.get_context("spawn")
+    queue: Any = ctx.Queue(maxsize=1)
+    proc = ctx.Process(target=_run_code_tests_worker, args=(output, tests, queue))
+    proc.daemon = True
+    proc.start()
+    proc.join(timeout_s)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=1)
+        return False
+    try:
+        return bool(queue.get_nowait())
+    except Exception:
+        return False
+
+
+def score_task(
+    task: Dict[str, Any],
+    output: str,
+    *,
+    allow_code_exec: bool = False,
+    code_test_timeout_s: float = DEFAULT_CODE_TEST_TIMEOUT_S,
+) -> bool:
     """
     Evaluate a task against an output. Supports combining multiple criteria.
     Returns True only if all specified criteria pass.
@@ -81,13 +114,21 @@ def score_task(task: Dict[str, Any], output: str) -> bool:
     if "asserts" in task:
         checks.append(score_contains_all(output, task["asserts"]))
     if "code_tests" in task:
-        checks.append(run_code_tests(output, task["code_tests"]))
+        if allow_code_exec:
+            checks.append(run_code_tests(output, task["code_tests"], timeout_s=code_test_timeout_s))
+        else:
+            checks.append(False)
     if not checks:
         return False
     return all(checks)
 
 
-def compute_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+def compute_accuracy(
+    results: List[Dict[str, Any]],
+    *,
+    allow_code_exec: bool = False,
+    code_test_timeout_s: float = DEFAULT_CODE_TEST_TIMEOUT_S,
+) -> Dict[str, Dict[str, float]]:
     totals: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     correct: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -107,7 +148,12 @@ def compute_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Dict[str, float
         }
         # Remove None entries for cleaner logic
         task = {k: v for k, v in task.items() if v is not None}
-        is_correct = score_task(task, output)
+        is_correct = score_task(
+            task,
+            output,
+            allow_code_exec=allow_code_exec,
+            code_test_timeout_s=code_test_timeout_s,
+        )
         totals[model][category] += 1
         if is_correct:
             correct[model][category] += 1
