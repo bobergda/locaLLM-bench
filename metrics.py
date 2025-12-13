@@ -72,6 +72,83 @@ def _run_code_tests_worker(output: str, tests: List[Dict[str, Any]], queue: Any)
     queue.put(True)
 
 
+def _run_code_tests_detailed_worker(output: str, tests: List[Dict[str, Any]], queue: Any) -> None:
+    code = extract_python_code(output)
+    if not code:
+        queue.put({"ok": False, "lines": ["no code extracted (FAIL)"]})
+        return
+    namespace: Dict[str, Any] = {}
+    try:
+        exec(code, namespace)
+    except Exception as exc:
+        queue.put({"ok": False, "lines": [f"exec failed with {exc} (FAIL)"]})
+        return
+
+    lines: List[str] = []
+    ok_all = True
+    for test in tests:
+        if "assert" in test:
+            expr = test.get("assert")
+            if not expr:
+                lines.append("missing assert expression (FAIL)")
+                ok_all = False
+                continue
+            try:
+                result = bool(eval(expr, namespace))
+                lines.append(f"assert {expr} ({'OK' if result else 'FAIL'})")
+                if not result:
+                    ok_all = False
+            except Exception as exc:
+                lines.append(f"{expr} raised {exc} (FAIL)")
+                ok_all = False
+            continue
+
+        expr = test.get("call")
+        expected = test.get("expected")
+        if not expr:
+            lines.append("missing call expression (FAIL)")
+            ok_all = False
+            continue
+        try:
+            value = eval(expr, namespace)
+            is_ok = value == expected
+            lines.append(f"{expr} -> {value} (expected {expected}) ({'OK' if is_ok else 'FAIL'})")
+            if not is_ok:
+                ok_all = False
+        except Exception as exc:
+            lines.append(f"{expr} raised {exc} (FAIL)")
+            ok_all = False
+
+    queue.put({"ok": ok_all, "lines": lines})
+
+
+def run_code_tests_detailed(
+    output: str,
+    tests: List[Dict[str, Any]],
+    timeout_s: float = DEFAULT_CODE_TEST_TIMEOUT_S,
+) -> tuple[bool, List[str]]:
+    """
+    Like `run_code_tests`, but returns per-test lines suitable for printing.
+    """
+    ctx = mp.get_context("spawn")
+    queue: Any = ctx.Queue(maxsize=1)
+    proc = ctx.Process(target=_run_code_tests_detailed_worker, args=(output, tests, queue))
+    proc.daemon = True
+    proc.start()
+    proc.join(timeout_s)
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=1)
+        return False, [f"timeout after {timeout_s:.2f}s (FAIL)"]
+    try:
+        msg = queue.get_nowait()
+        ok = bool(msg.get("ok"))
+        lines = msg.get("lines") or []
+        return ok, [str(x) for x in lines]
+    except Exception:
+        return False, ["no result from worker (FAIL)"]
+
+
 def run_code_tests(output: str, tests: List[Dict[str, Any]], timeout_s: float = DEFAULT_CODE_TEST_TIMEOUT_S) -> bool:
     """
     Execute model-produced code and run simple assert-style checks.

@@ -1,13 +1,24 @@
+# Configuration file for locaLLM-bench.
+# See README.md for details.
 ollama_host: "http://localhost:11434"
+
+# List of models to benchmark.
 models:
   - "magistral:24b"
   - "gpt-oss:20b"
   - "qwen3:14b"
   - "qwen3:8b"
+  
+# Directory containing test definitions (YAML files).
 tests_dir: "tests"
+
+# Debug mode settings
 debug: true
+# Which models to run in debug mode (overrides all models).
 debug_models: [ "qwen3:14b"]
+# Which test sets to run in debug mode (overrides all test sets).
 debug_test_sets: [ "code" ]
+# Limit number of tasks per test set in debug mode (null = no limit).
 debug_task_limit: 1
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.
@@ -19,3 +30,6 @@ code_test_timeout_s: 2.0
 # Optional Ollama generation options passed as `options` to `client.generate(...)`.
 # Common keys: temperature, seed, num_ctx, top_p, top_k, repeat_penalty.
 generate_options: {}
+
+# Report: when true, print each code_tests assertion result to stdout (requires unsafe_code_exec).
+report_verbose_code_tests: true
