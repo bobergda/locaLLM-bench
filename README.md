@@ -12,13 +12,11 @@ A minimal harness to benchmark small local LLMs served by Ollama. It loads test 
 ## Requirements
 - Python 3.10+
 - Ollama running locally at `http://localhost:11434`
-- Python packages: `requests`, `pyyaml`
+- Python packages: `ollama`, `PyYAML`, `psutil`
 
 ## Installation
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install requests pyyaml
+./install.sh
 ```
 
 ## Usage
@@ -26,9 +24,8 @@ pip install requests pyyaml
 2. Add test files under `tests/` (examples in `tests/instruction.json`).
 3. Run:
 ```bash
-python runner.py
+./start.sh
 ```
-4. Review `results.json` for collected outputs.
 
 ## Configuration
 Example `config.yaml`:
