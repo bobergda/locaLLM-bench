@@ -13,12 +13,17 @@ models:
 tests_dir: "tests"
 
 # Runner selection and logging.
-log_level: "INFO" # DEBUG|INFO|WARNING|ERROR
+log_level: "DEBUG" # DEBUG|INFO|WARNING|ERROR
 include_test_sets: [ "code" ] # empty list = all
 task_limit: 4 # null/0 = no limit
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.
 unsafe_code_exec: true
+
+# Code test runner mode:
+# - "safe": run in a separate process with timeout (slower, safer against hangs)
+# - "fast": run inline without timeout (fast, can hang on `while True`)
+code_test_mode: "safe"
 
 # Hard timeout for `code_tests` execution (seconds). Timeouts fail the test.
 code_test_timeout_s: 2.0

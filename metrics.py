@@ -7,6 +7,16 @@ from typing import Any, Dict, Iterable, List
 DEFAULT_CODE_TEST_TIMEOUT_S = 2.0
 
 
+def _get_mp_context() -> Any:
+    """
+    Prefer `fork` on Unix for speed; fall back to `spawn` when unavailable.
+    """
+    try:
+        return mp.get_context("fork")
+    except Exception:
+        return mp.get_context("spawn")
+
+
 def score_exact(output: str, expected: str) -> bool:
     return output.strip() == expected.strip()
 
@@ -122,6 +132,87 @@ def _run_code_tests_detailed_worker(output: str, tests: List[Dict[str, Any]], qu
     queue.put({"ok": ok_all, "lines": lines})
 
 
+def run_code_tests_inline(output: str, tests: List[Dict[str, Any]]) -> bool:
+    """
+    Fast path: executes code in-process (no timeout). Dangerous on untrusted outputs.
+    """
+    code = extract_python_code(output)
+    if not code:
+        return False
+    namespace: Dict[str, Any] = {}
+    try:
+        exec(code, namespace)
+    except Exception:
+        return False
+    for test in tests:
+        if "assert" in test:
+            expr = test.get("assert")
+            if not expr or not _eval_assert(namespace, expr):
+                return False
+            continue
+        expr = test.get("call")
+        expected = test.get("expected")
+        if not expr:
+            return False
+        try:
+            value = eval(expr, namespace)
+        except Exception:
+            return False
+        if value != expected:
+            return False
+    return True
+
+
+def run_code_tests_detailed_inline(output: str, tests: List[Dict[str, Any]]) -> tuple[bool, List[str]]:
+    """
+    Fast path: executes code in-process (no timeout). Dangerous on untrusted outputs.
+    """
+    code = extract_python_code(output)
+    if not code:
+        return False, ["no code extracted (FAIL)"]
+    namespace: Dict[str, Any] = {}
+    try:
+        exec(code, namespace)
+    except Exception as exc:
+        return False, [f"exec failed with {exc} (FAIL)"]
+
+    lines: List[str] = []
+    ok_all = True
+    for test in tests:
+        if "assert" in test:
+            expr = test.get("assert")
+            if not expr:
+                lines.append("missing assert expression (FAIL)")
+                ok_all = False
+                continue
+            try:
+                result = bool(eval(expr, namespace))
+                lines.append(f"assert {expr} ({'OK' if result else 'FAIL'})")
+                if not result:
+                    ok_all = False
+            except Exception as exc:
+                lines.append(f"{expr} raised {exc} (FAIL)")
+                ok_all = False
+            continue
+
+        expr = test.get("call")
+        expected = test.get("expected")
+        if not expr:
+            lines.append("missing call expression (FAIL)")
+            ok_all = False
+            continue
+        try:
+            value = eval(expr, namespace)
+            is_ok = value == expected
+            lines.append(f"{expr} -> {value} (expected {expected}) ({'OK' if is_ok else 'FAIL'})")
+            if not is_ok:
+                ok_all = False
+        except Exception as exc:
+            lines.append(f"{expr} raised {exc} (FAIL)")
+            ok_all = False
+    return ok_all, lines
+
+
 def run_code_tests_detailed(
     output: str,
     tests: List[Dict[str, Any]],
@@ -130,7 +221,7 @@ def run_code_tests_detailed(
     """
     Like `run_code_tests`, but returns per-test lines suitable for printing.
     """
-    ctx = mp.get_context("spawn")
+    ctx = _get_mp_context()
     queue: Any = ctx.Queue(maxsize=1)
     proc = ctx.Process(target=_run_code_tests_detailed_worker, args=(output, tests, queue))
     proc.daemon = True
@@ -154,7 +245,7 @@ def run_code_tests(output: str, tests: List[Dict[str, Any]], timeout_s: float = 
     Execute model-produced code and run simple assert-style checks.
     Tests can be provided as {"assert": "expr"} or legacy {"call": "...", "expected": value}.
     """
-    ctx = mp.get_context("spawn")
+    ctx = _get_mp_context()
     queue: Any = ctx.Queue(maxsize=1)
     proc = ctx.Process(target=_run_code_tests_worker, args=(output, tests, queue))
     proc.daemon = True
