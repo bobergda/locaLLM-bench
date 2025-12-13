@@ -320,11 +320,6 @@ def main() -> None:
         help="Allow executing model-produced code for code_tests (overrides config).",
     )
     parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Print and include extra debug details (overrides config).",
-    )
-    parser.add_argument(
         "--verbose-code-tests",
         action="store_true",
         help="Print each code_tests assertion result to stdout (requires unsafe code exec).",
@@ -339,7 +334,6 @@ def main() -> None:
 
     cfg = load_config(Path(args.config))
     allow_code_exec = bool(cfg.get("unsafe_code_exec", False)) or bool(args.unsafe_code_exec)
-    debug = bool(args.debug)
     verbose_code_tests = bool(cfg.get("report_verbose_code_tests", False)) or bool(args.verbose_code_tests)
     code_test_timeout_s = (
         float(args.code_test_timeout_s)
@@ -365,29 +359,24 @@ def main() -> None:
     test_sets = sorted({r.get("test_set") for r in results if r.get("test_set")})
     total = len(results)
     error_count = sum(1 for r in results if r.get("error"))
-    timing = compute_timing_stats(results) if debug else {}
-    failure_samples = (
-        collect_failure_samples(
-            results,
-            allow_code_exec=allow_code_exec,
-            code_test_timeout_s=code_test_timeout_s,
-            per_group_limit=3,
-        )
-        if debug
-        else {}
+    timing = compute_timing_stats(results)
+    failure_samples = collect_failure_samples(
+        results,
+        allow_code_exec=allow_code_exec,
+        code_test_timeout_s=code_test_timeout_s,
+        per_group_limit=3,
     )
 
-    if debug:
-        print(f"Models: {', '.join(models)}")
-        print(f"Test sets: {', '.join(test_sets)}")
-        print(f"Total results: {total} (errors: {error_count})")
-        print(f"Code execution for code_tests: {'ENABLED' if allow_code_exec else 'DISABLED'}")
-        print(f"Code test timeout: {code_test_timeout_s:.2f}s")
-        if timing:
-            print("Timing stats: available (avg_s/p95_s per model/test_set)")
-        if failure_samples:
-            groups = sum(len(v) for v in failure_samples.values())
-            print(f"Failure samples: collected for {groups} model/test_set group(s)")
+    print(f"Models: {', '.join(models)}")
+    print(f"Test sets: {', '.join(test_sets)}")
+    print(f"Total results: {total} (errors: {error_count})")
+    print(f"Code execution for code_tests: {'ENABLED' if allow_code_exec else 'DISABLED'}")
+    print(f"Code test timeout: {code_test_timeout_s:.2f}s")
+    if timing:
+        print("Timing stats: available (avg_s/p95_s per model/test_set)")
+    if failure_samples:
+        groups = sum(len(v) for v in failure_samples.values())
+        print(f"Failure samples: collected for {groups} model/test_set group(s)")
 
     if verbose_code_tests and not allow_code_exec:
         print("Verbose code tests requested but unsafe code execution is DISABLED; skipping per-test output.")
@@ -440,29 +429,30 @@ def main() -> None:
             for err in errors:
                 f.write(f"- {err}\n")
             f.write("\n")
-        if debug:
-            f.write("## Debug\n\n")
-            if timing:
-                f.write("### Timing (avg_s and p95_s)\n\n")
-                f.write(format_timing_table(timing))
-                f.write("\n\n")
-            if failure_samples:
-                f.write("### Failure samples (first few per model/test_set)\n\n")
-                for model in sorted(failure_samples):
-                    for test_set in sorted(failure_samples[model]):
-                        items = failure_samples[model][test_set]
-                        if not items:
-                            continue
-                        f.write(f"- {model} / {test_set}\n")
-                        for item in items:
-                            reasons = ",".join(item.get("reasons", []))
-                            task_id = item.get("task_id")
-                            err = item.get("error")
-                            if err:
-                                f.write(f"  - task {task_id}: error={err}\n")
-                            else:
-                                f.write(f"  - task {task_id}: reasons={reasons} prompt=\"{item.get('prompt','')}\" response=\"{item.get('response','')}\"\n")
-                f.write("\n")
+        f.write("## Details\n\n")
+        if timing:
+            f.write("### Timing (avg_s and p95_s)\n\n")
+            f.write(format_timing_table(timing))
+            f.write("\n\n")
+        if failure_samples:
+            f.write("### Failure samples (first few per model/test_set)\n\n")
+            for model in sorted(failure_samples):
+                for test_set in sorted(failure_samples[model]):
+                    items = failure_samples[model][test_set]
+                    if not items:
+                        continue
+                    f.write(f"- {model} / {test_set}\n")
+                    for item in items:
+                        reasons = ",".join(item.get("reasons", []))
+                        task_id = item.get("task_id")
+                        err = item.get("error")
+                        if err:
+                            f.write(f"  - task {task_id}: error={err}\n")
+                        else:
+                            f.write(
+                                f"  - task {task_id}: reasons={reasons} prompt=\"{item.get('prompt','')}\" response=\"{item.get('response','')}\"\n"
+                            )
+            f.write("\n")
 
 
 if __name__ == "__main__":
