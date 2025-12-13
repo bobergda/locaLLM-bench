@@ -23,13 +23,13 @@ def save_results_atomic(results: List[Dict[str, Any]], path: Path) -> None:
     os.replace(tmp_path, path)
 
 
-def setup_logger(log_path: Path, debug: bool = False) -> logging.Logger:
+def setup_logger(log_path: Path, log_level: str = "INFO") -> logging.Logger:
     logger = logging.getLogger("ollabench")
+    level = getattr(logging, (log_level or "INFO").upper(), logging.INFO)
     if logger.handlers:
-        # Update level if already configured
-        logger.setLevel(logging.DEBUG if debug else logging.INFO)
+        logger.setLevel(level)
         return logger
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    logger.setLevel(level)
 
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     stream_handler = logging.StreamHandler()
@@ -80,27 +80,26 @@ def call_ollama(
     }
 
 
-def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | None = None) -> List[Dict[str, Any]]:
+def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Dict[str, Any]]:
     logger = logging.getLogger("ollabench")
     cfg = load_config(config_path)
     tests_dir = Path(cfg.get("tests_dir", "tests"))
     host = cfg.get("ollama_host", "http://localhost:11434")
-    debug_mode = bool(cfg.get("debug", debug))
-    models = cfg.get("models", [])
-    debug_models = cfg.get("debug_models") or []
-    models_to_run = debug_models if debug_mode and debug_models else models
-    debug_test_sets = cfg.get("debug_test_sets") or []
-    debug_task_limit = cfg.get("debug_task_limit")
+    models = cfg.get("models") or []
+    if not isinstance(models, list):
+        raise TypeError("config.yaml: 'models' must be a list of model names")
+    models_to_run = models
+    include_test_sets = cfg.get("include_test_sets") or cfg.get("test_sets") or []
+    task_limit = cfg.get("task_limit")
     gen_options = cfg.get("generate_options") or {}
     schema_version = int(cfg.get("results_schema_version", 1))
     run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     run_id = run_started_at
     logger.info(
-        "Loaded config: host=%s, models=%s, tests_dir=%s, debug=%s",
+        "Loaded config: host=%s, models=%s, tests_dir=%s",
         host,
         models_to_run,
         tests_dir,
-        debug_mode,
     )
 
     test_sets = load_tests(tests_dir)
@@ -111,14 +110,14 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
     for model in models_to_run:
         logger.info("Starting model: %s", model)
         for test_set, tasks in test_sets.items():
-            if debug_mode and debug_test_sets and test_set not in debug_test_sets:
-                logger.debug("Debug mode: skipping test_set %s", test_set)
+            if include_test_sets and test_set not in include_test_sets:
+                logger.info("Skipping test_set %s (not selected)", test_set)
                 continue
             logger.info("  Test set: %s (%d tasks)", test_set, len(tasks))
             tasks_iter = tasks
-            if debug_mode and debug_task_limit:
-                tasks_iter = tasks[: int(debug_task_limit)]
-                logger.debug("Debug mode: limiting to first %s task(s) in %s", debug_task_limit, test_set)
+            if task_limit:
+                tasks_iter = tasks[: int(task_limit)]
+                logger.info("Limiting to first %s task(s) in %s", task_limit, test_set)
             for idx, task in enumerate(tasks_iter):
                 prompt = task["prompt"]
                 logger.debug("Prompt: %s", prompt)
@@ -128,7 +127,7 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
                 except Exception as exc:
                     logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, idx, exc)
                     result = {"error": str(exc)}
-                if debug_mode and "response" in result:
+                if "response" in result:
                     text = (result.get("response") or "").strip()
                     logger.debug("Response [model=%s, test_set=%s, task=%d]:\n%s", model, test_set, idx, text)
                 row = {
@@ -153,10 +152,10 @@ def run_benchmark(config_path: Path, debug: bool = False, stream_path: Path | No
 if __name__ == "__main__":
     config_file = Path("config.yaml")
     cfg = load_config(config_file)
-    debug_flag = bool(cfg.get("debug", False))
-    logger = setup_logger(Path("runner.log"), debug=debug_flag)
-    logger.info("Starting benchmark run%s", " (debug)" if debug_flag else "")
+    log_level = str(cfg.get("log_level", "INFO"))
+    logger = setup_logger(Path("runner.log"), log_level=log_level)
+    logger.info("Starting benchmark run (log_level=%s)", log_level.upper())
     output_path = Path("results.json")
-    results = run_benchmark(config_file, debug=debug_flag, stream_path=output_path)
+    results = run_benchmark(config_file, stream_path=output_path)
     save_results_atomic(results, output_path)
     logger.info("Saved %d results to %s", len(results), output_path)

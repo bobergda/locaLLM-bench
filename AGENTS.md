@@ -39,9 +39,9 @@ Each entry is an object with `prompt` plus optional scoring keys:
 - Treat `tests/*.json` as an API: keep backward compatibility or migrate all files consistently.
 
 ## Debugging and cost control
-- Use `config.yaml`: `debug`, `debug_models`, `debug_test_sets`, `debug_task_limit`.
+- Use `config.yaml`: `log_level`, `include_test_sets`, `task_limit`.
 - Prefer small, fast runs (task limits) during iteration.
 
 ## How to validate changes
 - Minimum: `python3 -m py_compile runner.py metrics.py report.py`
-- Quick smoke test: set `debug_task_limit: 1`, run `python3 runner.py`, then `python3 report.py`
+- Quick smoke test: set `task_limit: 1`, run `python3 runner.py`, then `python3 report.py`

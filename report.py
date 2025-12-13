@@ -339,7 +339,7 @@ def main() -> None:
 
     cfg = load_config(Path(args.config))
     allow_code_exec = bool(cfg.get("unsafe_code_exec", False)) or bool(args.unsafe_code_exec)
-    debug = bool(cfg.get("debug", False)) or bool(args.debug)
+    debug = bool(args.debug)
     verbose_code_tests = bool(cfg.get("report_verbose_code_tests", False)) or bool(args.verbose_code_tests)
     code_test_timeout_s = (
         float(args.code_test_timeout_s)
