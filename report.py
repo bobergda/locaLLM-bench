@@ -118,7 +118,7 @@ def save_code_artifacts(results: List[Dict], output_dir: Path) -> int:
         code = extract_python_code(resp)
         if not code:
             continue
-        filename = f"{model}_{category}_task{task_id}.py".replace("/", "_")
+        filename = f"{model}_{category}_task{task_id}.py".replace("/", "_").replace(":", "_")
         (output_dir / filename).write_text(code, encoding="utf-8")
         saved += 1
     return saved

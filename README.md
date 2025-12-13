@@ -26,6 +26,15 @@ A minimal harness to benchmark small local LLMs served by Ollama. It loads test 
 ```bash
 ./start.sh
 ```
+4. Generate a report:
+```bash
+.venv/bin/python report.py
+```
+
+Security note: `report.py --unsafe-code-exec` will execute model-produced code for `code_tests`. Only enable this if you trust the results file.
+
+## Agent instructions
+- See `AGENTS.md` for the prompt/instructions used by a coding agent to work in this repo.
 
 ## Configuration
 Example `config.yaml`:
