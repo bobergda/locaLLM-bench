@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import html
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -13,6 +15,9 @@ from metrics import (
     score_contains_all,
     score_contains_any,
 )
+
+_MARK_START = "__LOCALLLM_MARK_START__"
+_MARK_END = "__LOCALLLM_MARK_END__"
 
 
 def load_config(path: Path) -> Dict[str, Any]:
@@ -92,6 +97,54 @@ def format_timing_table(timing: Dict[str, Dict[str, Dict[str, float]]]) -> str:
     return "\n".join(lines)
 
 
+def _truncate_text(text: str, *, max_chars: int) -> tuple[str, bool]:
+    if max_chars <= 0:
+        return "", bool(text)
+    if len(text) <= max_chars:
+        return text, False
+    return text[: max_chars - 1] + "…", True
+
+
+def _unique_nonempty_phrases(phrases: List[Any]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for p in phrases:
+        if p is None:
+            continue
+        s = str(p).strip()
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def _highlight_html(text: str, phrases: List[str]) -> str:
+    """
+    Returns HTML-escaped text with <mark> wrapping any occurrences of phrases (case-insensitive).
+    """
+    if not text:
+        return ""
+    phrases = _unique_nonempty_phrases(phrases)
+    if not phrases:
+        return html.escape(text)
+
+    phrases_sorted = sorted(phrases, key=len, reverse=True)
+    pattern = re.compile("|".join(re.escape(p) for p in phrases_sorted), flags=re.IGNORECASE)
+    marked = pattern.sub(lambda m: f"{_MARK_START}{m.group(0)}{_MARK_END}", text)
+    escaped = html.escape(marked)
+    return escaped.replace(_MARK_START, "<mark>").replace(_MARK_END, "</mark>")
+
+
+def _format_response_pre_block(response: str, *, highlight_phrases: List[str], max_chars: int) -> tuple[str, bool]:
+    clipped, was_truncated = _truncate_text(response or "", max_chars=max_chars)
+    body = _highlight_html(clipped, highlight_phrases)
+    return f"<pre>{body}</pre>", was_truncated
+
+
 def _failure_reasons(
     row: Dict[str, Any],
     *,
@@ -156,6 +209,150 @@ def collect_failure_samples(
             }
             lst.append(item)
     return samples
+
+
+def _score_row_text_only(row: Dict[str, Any]) -> bool:
+    if row.get("error"):
+        return False
+    output = row.get("response", "") or ""
+    checks: List[bool] = []
+
+    expected = row.get("expected")
+    if expected is not None:
+        checks.append(output.strip() == str(expected).strip())
+    if row.get("contains_all") is not None:
+        checks.append(score_contains_all(output, row["contains_all"]))
+    if row.get("contains_any") is not None:
+        checks.append(score_contains_any(output, row["contains_any"]))
+    if row.get("asserts") is not None:
+        checks.append(score_contains_all(output, row["asserts"]))
+
+    return bool(checks) and all(checks)
+
+
+def collect_text_check_samples(
+    results: List[Dict],
+    *,
+    per_group_limit: int = 3,
+) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    """
+    Returns dict[model][test_set] -> list of sample rows failing *text* checks only
+    (expected/contains_all/contains_any/asserts). Deterministic order.
+    """
+    samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+    for row in results:
+        model = row.get("model")
+        test_set = row.get("test_set")
+        if not model or not test_set:
+            continue
+        grouped.setdefault((model, test_set), []).append(row)
+
+    for (model, test_set), rows in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
+        for row in sorted(rows, key=lambda r: int(r.get("task_id", 0))):
+            if len(samples.get(model, {}).get(test_set, [])) >= per_group_limit:
+                continue
+            has_text_checks = any(
+                row.get(k) is not None for k in ("expected", "contains_all", "contains_any", "asserts")
+            )
+            if not has_text_checks:
+                continue
+            ok = _score_row_text_only(row)
+            if ok:
+                continue
+            item = {
+                "task_id": row.get("task_id"),
+                "prompt": row.get("prompt", "") or "",
+                "response": row.get("response", "") or "",
+                "expected": row.get("expected"),
+                "contains_all": row.get("contains_all") or [],
+                "contains_any": row.get("contains_any") or [],
+                "asserts": row.get("asserts") or [],
+                "error": row.get("error"),
+            }
+            samples.setdefault(model, {}).setdefault(test_set, []).append(item)
+    return samples
+
+
+def _missing_phrases(text: str, phrases: List[str]) -> List[str]:
+    lowered = text.lower()
+    return [p for p in phrases if p.lower() not in lowered]
+
+
+def format_text_check_samples_md(
+    samples: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    *,
+    max_prompt_chars: int = 240,
+    max_response_chars: int = 1600,
+) -> str:
+    if not samples:
+        return "(no text check failures to display)\n"
+
+    lines: List[str] = []
+    for model in sorted(samples):
+        for test_set in sorted(samples[model]):
+            rows = samples[model][test_set]
+            if not rows:
+                continue
+            lines.append(f"#### {model} / {test_set}\n")
+            for row in rows:
+                task_id = row.get("task_id", "?")
+                prompt = (row.get("prompt") or "").strip()
+                response = row.get("response") or ""
+
+                prompt_preview, prompt_trunc = _truncate_text(prompt.replace("\n", " "), max_chars=max_prompt_chars)
+                if prompt_trunc:
+                    prompt_preview += " (truncated)"
+
+                expected = row.get("expected")
+                contains_all = _unique_nonempty_phrases(list(row.get("contains_all") or []))
+                contains_any = _unique_nonempty_phrases(list(row.get("contains_any") or []))
+                asserts = _unique_nonempty_phrases(list(row.get("asserts") or []))
+
+                missing_all = _missing_phrases(response, contains_all) if contains_all else []
+                missing_asserts = _missing_phrases(response, asserts) if asserts else []
+                matched_any = [p for p in contains_any if p.lower() in response.lower()] if contains_any else []
+
+                lines.append(f"- task {task_id}")
+                lines.append(f"  - prompt: {prompt_preview}")
+                if expected is not None:
+                    ok = response.strip() == str(expected).strip()
+                    lines.append(f"  - expected: {'OK' if ok else 'FAIL'} (`{str(expected).strip()}`)")
+                if contains_all:
+                    lines.append(f"  - contains_all: {'OK' if not missing_all else 'FAIL'} ({', '.join(contains_all)})")
+                    if missing_all:
+                        lines.append(f"    - missing: {', '.join(missing_all)}")
+                if contains_any:
+                    lines.append(
+                        f"  - contains_any: {'OK' if matched_any else 'FAIL'} ({', '.join(contains_any)})"
+                    )
+                    if matched_any:
+                        lines.append(f"    - matched: {', '.join(matched_any)}")
+                    else:
+                        lines.append(f"    - missing any-of: {', '.join(contains_any)}")
+                if asserts:
+                    lines.append(f"  - asserts: {'OK' if not missing_asserts else 'FAIL'} ({', '.join(asserts)})")
+                    if missing_asserts:
+                        lines.append(f"    - missing: {', '.join(missing_asserts)}")
+
+                highlight_phrases = []
+                highlight_phrases.extend([p for p in contains_all if p.lower() in response.lower()])
+                highlight_phrases.extend(matched_any)
+                highlight_phrases.extend([p for p in asserts if p.lower() in response.lower()])
+
+                pre, resp_trunc = _format_response_pre_block(
+                    response,
+                    highlight_phrases=highlight_phrases,
+                    max_chars=max_response_chars,
+                )
+                lines.append("  - response:")
+                if resp_trunc:
+                    lines.append(f"    - note: truncated to {max_response_chars} chars")
+                lines.append("")
+                lines.append(pre)
+                lines.append("")
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def format_markdown_table(accuracies: Dict[str, Dict[str, float]], overall: Dict[str, float]) -> str:
@@ -517,6 +714,7 @@ def _write_report_md(
     errors: List[str],
     timing: Dict[str, Dict[str, Dict[str, float]]],
     failure_samples: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    text_check_samples_md: str,
 ) -> None:
     with report_path.open("w", encoding="utf-8") as f:
         f.write("# Benchmark Report\n\n")
@@ -560,6 +758,9 @@ def _write_report_md(
             f.write("### Timing (avg_s and p95_s)\n\n")
             f.write(format_timing_table(timing))
             f.write("\n\n")
+        f.write("### Text check samples (failed)\n\n")
+        f.write(text_check_samples_md)
+        f.write("\n")
         f.write("### Code tests report\n\n")
         if allow_code_exec and code_test_details_text:
             f.write("```text\n")
@@ -618,6 +819,7 @@ def main() -> None:
         code_test_ok=code_test_ok,
         per_group_limit=3,
     )
+    text_check_samples_md = format_text_check_samples_md(collect_text_check_samples(results, per_group_limit=3))
 
     failure_samples_groups = sum(len(v) for v in failure_samples.values()) if failure_samples else 0
     _print_console_summary(
@@ -658,6 +860,7 @@ def main() -> None:
         errors=errors,
         timing=timing,
         failure_samples=failure_samples,
+        text_check_samples_md=text_check_samples_md,
     )
 
 
