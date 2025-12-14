@@ -456,15 +456,15 @@ def format_per_request_stats_md(
         dur_txt = f"{float(dur):.2f}s" if dur is not None else "n/a"
         eval_txt = str(eval_count) if eval_count is not None else "n/a"
         tps_txt = f"{tps:.1f}" if tps is not None else "n/a"
-        ok_txt = "ERROR" if row.get("error") else "OK"
 
         summary = (
-            f"{i:04d} — {model} / {test_set} / task {task_id} — {ok_txt} — "
+            f"{i:04d} — {model} / {test_set} / task {task_id} — "
             f"tps={tps_txt}, tokens={eval_txt}, dur={dur_txt} — {html.escape(prompt_preview)}"
         )
         lines.append("<details>")
         lines.append(f"<summary>{summary}</summary>")
         lines.append("")
+        lines.append(f"- prompt: {prompt_preview}")        
         lines.append(f"- model: `{model}`")
         lines.append(f"- test_set: `{test_set}`")
         lines.append(f"- task_id: `{task_id}`")
@@ -473,7 +473,6 @@ def format_per_request_stats_md(
         lines.append(f"- tokens_per_sec: `{tps}`")
         if row.get("error"):
             lines.append(f"- error: `{row.get('error')}`")
-        lines.append(f"- prompt: {prompt_preview}")
         lines.append("")
         lines.append("</details>")
         lines.append("")
