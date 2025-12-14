@@ -429,59 +429,6 @@ def format_text_check_samples_md(
     return "\n".join(lines).rstrip() + "\n"
 
 
-def format_per_request_stats_md(
-    results: List[Dict[str, Any]],
-    *,
-    max_prompt_chars: int = 240,
-) -> str:
-    """
-    Per-row stats in the same order as results.json.
-    """
-    lines: List[str] = []
-    any_rows = False
-    for i, row in enumerate(results):
-        model = str(row.get("model", "?"))
-        test_set = str(row.get("test_set", "?"))
-        task_id = row.get("task_id", "?")
-        prompt = (row.get("prompt") or "").strip()
-        prompt_preview, prompt_trunc = _truncate_text(prompt.replace("\n", " "), max_chars=max_prompt_chars)
-        if prompt_trunc:
-            prompt_preview += " (truncated)"
-
-        dur = row.get("total_duration_s")
-        eval_count = row.get("eval_count")
-        tps = _row_tokens_per_sec(row)
-        any_rows = True
-
-        dur_txt = f"{float(dur):.2f}s" if dur is not None else "n/a"
-        eval_txt = str(eval_count) if eval_count is not None else "n/a"
-        tps_txt = f"{tps:.1f}" if tps is not None else "n/a"
-
-        summary = (
-            f"{i:04d} — {model} / {test_set} / task {task_id} — "
-            f"tps={tps_txt}, tokens={eval_txt}, dur={dur_txt} — {html.escape(prompt_preview)}"
-        )
-        lines.append("<details>")
-        lines.append(f"<summary>{summary}</summary>")
-        lines.append("")
-        lines.append(f"- prompt: {prompt_preview}")        
-        lines.append(f"- model: `{model}`")
-        lines.append(f"- test_set: `{test_set}`")
-        lines.append(f"- task_id: `{task_id}`")
-        lines.append(f"- total_duration_s: `{dur}`")
-        lines.append(f"- eval_count: `{eval_count}`")
-        lines.append(f"- tokens_per_sec: `{tps}`")
-        if row.get("error"):
-            lines.append(f"- error: `{row.get('error')}`")
-        lines.append("")
-        lines.append("</details>")
-        lines.append("")
-
-    if not any_rows:
-        return "(no results to display)\n"
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def format_markdown_table(accuracies: Dict[str, Dict[str, float]], overall: Dict[str, float]) -> str:
     test_sets = sorted({name for model_data in accuracies.values() for name in model_data})
     header = ["Model"] + test_sets + ["Overall"]
@@ -933,7 +880,6 @@ def _write_report_md(
     throughput: Dict[str, Dict[str, Dict[str, float]]],
     failure_samples: Dict[str, Dict[str, List[Dict[str, Any]]]],
     text_check_samples_md: str,
-    per_request_stats_md: str,
     code_test_details_md: str,
 ) -> None:
     with report_path.open("w", encoding="utf-8") as f:
@@ -982,9 +928,6 @@ def _write_report_md(
             f.write("### Throughput (tokens_per_sec avg and p95)\n\n")
             f.write(format_tokens_per_sec_table(throughput))
             f.write("\n\n")
-        f.write("### Per-request stats\n\n")
-        f.write(per_request_stats_md)
-        f.write("\n")
         f.write("### Text check details\n\n")
         f.write(text_check_samples_md)
         f.write("\n")
@@ -1044,7 +987,6 @@ def main() -> None:
     error_count = sum(1 for r in results if r.get("error"))
     timing = compute_timing_stats(results)
     throughput = compute_tokens_per_sec_stats(results)
-    per_request_stats_md = format_per_request_stats_md(results)
     failure_samples = collect_failure_samples(
         results,
         allow_code_exec=allow_code_exec,
@@ -1094,7 +1036,6 @@ def main() -> None:
         throughput=throughput,
         failure_samples=failure_samples,
         text_check_samples_md=text_check_samples_md,
-        per_request_stats_md=per_request_stats_md,
         code_test_details_md=code_test_details_md,
     )
 
