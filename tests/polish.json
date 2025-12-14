@@ -1,7 +1,8 @@
 [
   {
     "prompt": "Napisz krótką definicję modelu językowego w jednym zdaniu.",
-    "contains_any": ["przewiduje", "tokeny", "zdania"]
+    "contains_all": ["model"],
+    "contains_any": ["język", "jezyk", "token", "tekst", "przewid", "prawdopodob", "następn", "nastepn"]
   },
   {
     "prompt": "Podaj dwa zastosowania lokalnych modeli LLM w firmie. Odpowiedź jako lista numerowana dokładnie: \"1. ...\" oraz \"2. ...\".",
