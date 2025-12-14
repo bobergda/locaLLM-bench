@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -346,7 +347,7 @@ def _load_report_settings(cfg: Dict[str, Any]) -> tuple[bool, str, float]:
 
 def _require_results(path: Path) -> List[Dict]:
     if not path.exists():
-        raise FileNotFoundError("results.json not found. Run runner.py first.")
+        raise FileNotFoundError(f"Results file not found: {path}")
     return load_results(path)
 
 
@@ -354,6 +355,56 @@ def _sorted_rows_with_code_tests(results: List[Dict]) -> List[Dict]:
     rows = [r for r in results if r.get("code_tests") and not r.get("error")]
     rows.sort(key=lambda r: (r.get("model", ""), r.get("test_set", ""), int(r.get("task_id", 0))))
     return rows
+
+
+def _find_latest_run_dir() -> Path | None:
+    """
+    Returns the latest run directory, if available.
+    Prefers results/latest -> symlink created by runner.py.
+    """
+    latest_link = Path("results") / "latest"
+    if latest_link.exists() and latest_link.is_dir():
+        return latest_link.resolve()
+
+    latest_txt = Path("results") / "latest.txt"
+    if latest_txt.exists():
+        try:
+            p = Path(latest_txt.read_text(encoding="utf-8").strip())
+            if p.exists() and p.is_dir():
+                return p
+        except Exception:
+            pass
+
+    root = Path("results") / "runs"
+    if not root.exists():
+        return None
+    dirs = [p for p in root.iterdir() if p.is_dir()]
+    if not dirs:
+        return None
+    dirs.sort(key=lambda p: p.name)
+    return dirs[-1]
+
+
+def _default_results_path() -> Path:
+    """
+    Default results.json resolution:
+    1) results/latest/results.json
+    2) latest dir under results/runs/*/results.json
+    3) ./results.json (legacy)
+    4) ./results/results.json (legacy)
+    """
+    if (env_path := os.environ.get("LOCALLLM_RESULTS")):
+        return Path(env_path)
+
+    if (latest_dir := _find_latest_run_dir()) is not None:
+        candidate = latest_dir / "results.json"
+        if candidate.exists():
+            return candidate
+
+    for candidate in (Path("results.json"), Path("results") / "results.json"):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError("No results.json found (run runner.py first).")
 
 
 def _run_code_tests(
@@ -516,7 +567,9 @@ def main() -> None:
     cfg = load_config(Path("config.yaml"))
     allow_code_exec, code_test_mode, code_test_timeout_s = _load_report_settings(cfg)
 
-    results = _require_results(Path("results.json"))
+    results_path = _default_results_path()
+    results = _require_results(results_path)
+    output_dir = results_path.parent
     rows_with_tests = _sorted_rows_with_code_tests(results)
     code_test_ok, code_test_lines = _run_code_tests(
         rows_with_tests,
@@ -535,7 +588,7 @@ def main() -> None:
     code_test_failures: List[str] = []
     if allow_code_exec:
         code_test_stats, code_test_failures = compute_code_test_stats(results, code_test_ok=code_test_ok)
-    saved_codes = save_code_artifacts(results, Path("artifacts"))
+    saved_codes = save_code_artifacts(results, output_dir / "artifacts")
     errors = collect_errors(results)
     models = sorted({r["model"] for r in results})
     test_sets = sorted({str(test_set) for r in results if (test_set := r.get("test_set"))})
@@ -570,7 +623,7 @@ def main() -> None:
         )
 
     _write_report_md(
-        Path("report.md"),
+        output_dir / "report.md",
         models=models,
         test_sets=test_sets,
         total=total,

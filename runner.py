@@ -4,6 +4,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from shutil import rmtree
 from typing import Any, Dict, List
 
 import ollama
@@ -41,6 +42,47 @@ def setup_logger(log_path: Path, log_level: str = "INFO") -> logging.Logger:
     logger.addHandler(file_handler)
 
     return logger
+
+
+def _ensure_unique_dir(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for i in range(1, 10_000):
+        candidate = Path(f"{path}_{i:04d}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"Unable to create unique output directory near: {path}")
+
+
+def make_run_dir(cfg: Dict[str, Any]) -> Path:
+    """
+    Creates and returns a per-run output directory under a shared root.
+    Default: results/runs/YYYYmmdd-HHMMSSZ/
+    """
+    root = Path(str(cfg.get("output_root_dir") or "results/runs"))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+    run_dir = _ensure_unique_dir(root / stamp)
+    run_dir.mkdir(parents=True, exist_ok=False)
+    return run_dir
+
+
+def write_latest_pointer(run_dir: Path) -> None:
+    """
+    Best-effort "latest run" pointer:
+    - results/latest -> symlink to run dir (if possible)
+    - results/latest.txt with run dir path (fallback)
+    """
+    base = run_dir.parent.parent if run_dir.parent.name == "runs" else run_dir.parent
+    latest_link = base / "latest"
+    try:
+        if latest_link.exists() or latest_link.is_symlink():
+            if latest_link.is_dir() and not latest_link.is_symlink():
+                rmtree(latest_link)
+            else:
+                latest_link.unlink()
+        latest_link.symlink_to(run_dir.resolve(), target_is_directory=True)
+    except Exception:
+        (base / "latest.txt").write_text(str(run_dir.resolve()) + "\n", encoding="utf-8")
 
 
 def load_config(path: Path) -> Dict[str, Any]:
@@ -169,10 +211,13 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
 if __name__ == "__main__":
     config_file = Path("config.yaml")
     cfg = load_config(config_file)
+    run_dir = make_run_dir(cfg)
     log_level = str(cfg.get("log_level", "INFO"))
-    logger = setup_logger(Path("runner.log"), log_level=log_level)
+    logger = setup_logger(run_dir / "runner.log", log_level=log_level)
     logger.info("Starting benchmark run (log_level=%s)", log_level.upper())
-    output_path = Path("results.json")
+    output_path = run_dir / "results.json"
     results = run_benchmark(config_file, stream_path=output_path)
     save_results_atomic(results, output_path)
     logger.info("Saved %d results to %s", len(results), output_path)
+    write_latest_pointer(run_dir)
+    logger.info("Run directory: %s", run_dir)

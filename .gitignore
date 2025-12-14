@@ -13,11 +13,12 @@ venv/
 .vscode/
 
 # Benchmark outputs
-results.json
-report.csv
-report.md
-artifacts/
-results/
+/results/
 
 # Logs
 *.log
+
+# Temporary files
+*.tmp
+ignore.json
+/tmp/
