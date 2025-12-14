@@ -41,5 +41,8 @@ models:
   - "llama3"
   - "mistral"
 tests_dir: "tests"
+include_test_sets: [ "code" ] # optional, empty = all
+task_start_id: 0 # optional, 0-based start index per test set
+task_limit: 4 # optional, how many tasks to run from task_start_id (0/null = to the end)
 ```
 `ollama_host` points to your Ollama instance, `models` lists model names to benchmark, and `tests_dir` sets the directory with JSON test files.

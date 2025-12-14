@@ -90,6 +90,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
         raise TypeError("config.yaml: 'models' must be a list of model names")
     models_to_run = models
     include_test_sets = cfg.get("include_test_sets") or cfg.get("test_sets") or []
+    task_start_id = cfg.get("task_start_id")
     task_limit = cfg.get("task_limit")
     gen_options = cfg.get("generate_options") or {}
     schema_version = int(cfg.get("results_schema_version", 1))
@@ -114,22 +115,38 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                 logger.info("Skipping test_set %s (not selected)", test_set)
                 continue
             logger.info("  Test set: %s (%d tasks)", test_set, len(tasks))
-            tasks_iter = tasks
+
+            try:
+                start_id = int(task_start_id) if task_start_id is not None else 0
+            except Exception as exc:
+                raise TypeError("config.yaml: 'task_start_id' must be an integer or null") from exc
+            if start_id < 0 or start_id > len(tasks):
+                raise ValueError(
+                    f"config.yaml: task_start_id={start_id} out of range for test_set={test_set} (0..{len(tasks)})"
+                )
+
+            end_id = len(tasks)
             if task_limit:
-                tasks_iter = tasks[: int(task_limit)]
-                logger.info("Limiting to first %s task(s) in %s", task_limit, test_set)
-            for idx, task in enumerate(tasks_iter):
+                end_id = min(len(tasks), start_id + int(task_limit))
+
+            if start_id:
+                logger.info("Starting from task %d in %s", start_id, test_set)
+            if task_limit:
+                logger.info("Limiting to %s task(s) in %s", int(task_limit), test_set)
+
+            for task_id in range(start_id, end_id):
+                task = tasks[task_id]
                 prompt = task["prompt"]
                 logger.debug("Prompt: %s", prompt)
                 meta = {k: v for k, v in task.items() if k != "prompt"}
                 try:
                     result = call_ollama(model, prompt, client, logger, gen_options=gen_options)
                 except Exception as exc:
-                    logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, idx, exc)
+                    logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, task_id, exc)
                     result = {"error": str(exc)}
                 if "response" in result:
                     text = (result.get("response") or "").strip()
-                    logger.debug("Response [model=%s, test_set=%s, task=%d]:\n%s", model, test_set, idx, text)
+                    logger.debug("Response [model=%s, test_set=%s, task=%d]:\n%s", model, test_set, task_id, text)
                 row = {
                     "results_schema_version": schema_version,
                     "run_id": run_id,
@@ -138,7 +155,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                     "generate_options": gen_options,
                     "model": model,
                     "test_set": test_set,
-                    "task_id": idx,
+                    "task_id": task_id,
                     "prompt": prompt,
                     **meta,
                     **result,

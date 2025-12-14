@@ -17,6 +17,7 @@ results.json
 report.csv
 report.md
 artifacts/
+results/
 
 # Logs
 *.log
