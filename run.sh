@@ -77,17 +77,40 @@ run_report() {
   "$PY_BIN" report.py --results "$results_path"
 }
 
+run_report_all() {
+  ensure_venv
+  if [ ! -d "results/runs" ]; then
+    echo "No runs found (results/runs does not exist)." >&2
+    exit 1
+  fi
+
+  mapfile -t run_paths < <(find results/runs -maxdepth 2 -type f -name results.json -print 2>/dev/null | sort)
+  if [ "${#run_paths[@]}" -eq 0 ]; then
+    echo "No results.json files found under results/runs/." >&2
+    exit 1
+  fi
+
+  echo "Generating report for ${#run_paths[@]} run(s)..."
+  for p in "${run_paths[@]}"; do
+    echo "- $p"
+    "$PY_BIN" report.py --results "$p" >/dev/null
+  done
+  echo "Done."
+}
+
 echo "Select action:"
-echo "1) Install dependencies (python3.12 venv)"
-echo "2) Run benchmark (runner.py)"
-echo "3) Generate report (report.py)"
+echo "1) Run benchmark (runner.py)"
+echo "2) Generate report (report.py)"
+echo "3) Generate reports for all runs"
+echo "4) Install dependencies (python3.12 venv)"
 echo "q) Quit"
 read -rp "> " choice
 
 case "$choice" in
-  1) run_install ;;
-  2) run_runner ;;
-  3) run_report ;;
+  4) run_install ;;
+  1) run_runner ;;
+  2) run_report ;;
+  3) run_report_all ;;
   q|Q) echo "Bye"; exit 0 ;;
   *) echo "Unknown option"; exit 1 ;;
 esac
