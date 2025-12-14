@@ -465,6 +465,22 @@ def _print_code_test_details(
     code_test_ok: Dict[tuple[str, str, int], bool],
     code_test_lines: Dict[tuple[str, str, int], List[str]],
 ) -> None:
+    text = _format_code_test_details_text(
+        rows_with_tests,
+        code_test_ok=code_test_ok,
+        code_test_lines=code_test_lines,
+    )
+    if text:
+        print(text)
+
+
+def _format_code_test_details_text(
+    rows_with_tests: List[Dict],
+    *,
+    code_test_ok: Dict[tuple[str, str, int], bool],
+    code_test_lines: Dict[tuple[str, str, int], List[str]],
+) -> str:
+    lines: List[str] = []
     for row in rows_with_tests:
         model = row.get("model", "?")
         test_set = row.get("test_set", "?")
@@ -472,12 +488,13 @@ def _print_code_test_details(
         prompt_preview = (row.get("prompt", "") or "").strip().replace("\n", " ")
         if len(prompt_preview) > 120:
             prompt_preview = prompt_preview[:120] + "..."
-        print(f"[code_tests] model={model} test_set={test_set} task={task_id} prompt=\"{prompt_preview}\"")
+        lines.append(f"[code_tests] model={model} test_set={test_set} task={task_id} prompt=\"{prompt_preview}\"")
         key = _row_key(row)
         for line in code_test_lines.get(key, []):
-            print(f"  - {line}")
+            lines.append(f"  - {line}")
         if not code_test_ok.get(key, False):
-            print("  => FAIL")
+            lines.append("  => FAIL")
+    return "\n".join(lines)
 
 
 def _write_report_md(
@@ -491,6 +508,7 @@ def _write_report_md(
     allow_code_exec: bool,
     code_test_mode: str,
     code_test_timeout_s: float,
+    code_test_details_text: str,
     accuracies: Dict[str, Dict[str, float]],
     overall_acc: Dict[str, float],
     contains_all_stats: Dict[str, Dict[str, Tuple[int, int]]],
@@ -542,25 +560,15 @@ def _write_report_md(
             f.write("### Timing (avg_s and p95_s)\n\n")
             f.write(format_timing_table(timing))
             f.write("\n\n")
-        if failure_samples:
-            f.write("### Failure samples (first few per model/test_set)\n\n")
-            for model in sorted(failure_samples):
-                for test_set in sorted(failure_samples[model]):
-                    items = failure_samples[model][test_set]
-                    if not items:
-                        continue
-                    f.write(f"- {model} / {test_set}\n")
-                    for item in items:
-                        reasons = ",".join(item.get("reasons", []))
-                        task_id = item.get("task_id")
-                        err = item.get("error")
-                        if err:
-                            f.write(f"  - task {task_id}: error={err}\n")
-                        else:
-                            f.write(
-                                f"  - task {task_id}: reasons={reasons} prompt=\"{item.get('prompt','')}\" response=\"{item.get('response','')}\"\n"
-                            )
-            f.write("\n")
+        f.write("### Code tests report\n\n")
+        if allow_code_exec and code_test_details_text:
+            f.write("```text\n")
+            f.write(code_test_details_text)
+            f.write("\n```\n\n")
+        elif allow_code_exec:
+            f.write("(no code_tests to display)\n\n")
+        else:
+            f.write("(skipped: unsafe_code_exec=false)\n\n")
 
 
 def main() -> None:
@@ -576,6 +584,15 @@ def main() -> None:
         allow_code_exec=allow_code_exec,
         code_test_mode=code_test_mode,
         code_test_timeout_s=code_test_timeout_s,
+    )
+    code_test_details_text = (
+        _format_code_test_details_text(
+            rows_with_tests,
+            code_test_ok=code_test_ok,
+            code_test_lines=code_test_lines,
+        )
+        if allow_code_exec
+        else ""
     )
 
     accuracies, overall_acc = compute_accuracy_and_overall(
@@ -632,6 +649,7 @@ def main() -> None:
         allow_code_exec=allow_code_exec,
         code_test_mode=code_test_mode,
         code_test_timeout_s=code_test_timeout_s,
+        code_test_details_text=code_test_details_text,
         accuracies=accuracies,
         overall_acc=overall_acc,
         contains_all_stats=contains_all_stats,
