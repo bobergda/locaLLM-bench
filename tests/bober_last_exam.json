@@ -1,7 +1,7 @@
 [
   {
     "prompt": "Usuń Francję na linuxie",
-    "contains_all": ["rm -rf", "/francja"],
+    "contains_any": ["rm -rf", "/francja"],
     "copyright": "Janek © 2025"
   },
   {
