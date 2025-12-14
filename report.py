@@ -335,89 +335,120 @@ def compute_code_test_stats(
     return stats, failures
 
 
-def main() -> None:
-    cfg = load_config(Path("config.yaml"))
+def _load_report_settings(cfg: Dict[str, Any]) -> tuple[bool, str, float]:
     allow_code_exec = bool(cfg.get("unsafe_code_exec", False))
     code_test_mode = str(cfg.get("code_test_mode", "safe")).strip().lower()
     if code_test_mode not in ("safe", "fast"):
         raise ValueError("config.yaml: code_test_mode must be 'safe' or 'fast'")
     code_test_timeout_s = float(cfg.get("code_test_timeout_s", DEFAULT_CODE_TEST_TIMEOUT_S))
+    return allow_code_exec, code_test_mode, code_test_timeout_s
 
-    results_path = Path("results.json")
-    if not results_path.exists():
+
+def _require_results(path: Path) -> List[Dict]:
+    if not path.exists():
         raise FileNotFoundError("results.json not found. Run runner.py first.")
+    return load_results(path)
 
-    results = load_results(results_path)
-    rows_with_tests = [r for r in results if r.get("code_tests") and not r.get("error")]
-    rows_with_tests.sort(key=lambda r: (r.get("model", ""), r.get("test_set", ""), int(r.get("task_id", 0))))
+
+def _sorted_rows_with_code_tests(results: List[Dict]) -> List[Dict]:
+    rows = [r for r in results if r.get("code_tests") and not r.get("error")]
+    rows.sort(key=lambda r: (r.get("model", ""), r.get("test_set", ""), int(r.get("task_id", 0))))
+    return rows
+
+
+def _run_code_tests(
+    rows_with_tests: List[Dict],
+    *,
+    allow_code_exec: bool,
+    code_test_mode: str,
+    code_test_timeout_s: float,
+) -> tuple[Dict[tuple[str, str, int], bool], Dict[tuple[str, str, int], List[str]]]:
     code_test_ok: Dict[tuple[str, str, int], bool] = {}
     code_test_lines: Dict[tuple[str, str, int], List[str]] = {}
-    if allow_code_exec:
-        for row in rows_with_tests:
-            key = _row_key(row)
-            tests = row["code_tests"]
-            output = row.get("response", "") or ""
-            if code_test_mode == "fast":
-                ok, lines = run_code_tests_detailed_inline(output, tests)
-            else:
-                ok, lines = run_code_tests_detailed(output, tests, timeout_s=code_test_timeout_s)
-            code_test_lines[key] = lines
-            code_test_ok[key] = bool(ok)
+    if not allow_code_exec:
+        return code_test_ok, code_test_lines
 
-    accuracies, overall_acc = compute_accuracy_and_overall(
-        results,
-        allow_code_exec=allow_code_exec,
-        code_test_ok=code_test_ok,
-    )
-    contains_all_stats = compute_contains_all_stats(results)
-    code_test_stats: Dict[str, Dict[str, Tuple[int, int]]] = {}
-    code_test_failures: List[str] = []
-    if allow_code_exec:
-        code_test_stats, code_test_failures = compute_code_test_stats(results, code_test_ok=code_test_ok)
-    saved_codes = save_code_artifacts(results, Path("artifacts"))
-    errors = collect_errors(results)
-    models = sorted({r["model"] for r in results})
-    test_sets = sorted({str(test_set) for r in results if (test_set := r.get("test_set"))})
-    total = len(results)
-    error_count = sum(1 for r in results if r.get("error"))
-    timing = compute_timing_stats(results)
-    failure_samples = collect_failure_samples(
-        results,
-        allow_code_exec=allow_code_exec,
-        code_test_ok=code_test_ok,
-        per_group_limit=3,
-    )
+    for row in rows_with_tests:
+        key = _row_key(row)
+        tests = row["code_tests"]
+        output = row.get("response", "") or ""
+        if code_test_mode == "fast":
+            ok, lines = run_code_tests_detailed_inline(output, tests)
+        else:
+            ok, lines = run_code_tests_detailed(output, tests, timeout_s=code_test_timeout_s)
+        code_test_lines[key] = lines
+        code_test_ok[key] = bool(ok)
 
+    return code_test_ok, code_test_lines
+
+
+def _print_console_summary(
+    *,
+    models: List[str],
+    test_sets: List[str],
+    total: int,
+    error_count: int,
+    allow_code_exec: bool,
+    code_test_mode: str,
+    code_test_timeout_s: float,
+    timing_available: bool,
+    failure_samples_groups: int,
+) -> None:
     print(f"Models: {', '.join(models)}")
     print(f"Test sets: {', '.join(test_sets)}")
     print(f"Total results: {total} (errors: {error_count})")
     print(f"Code execution for code_tests: {'ENABLED' if allow_code_exec else 'DISABLED'}")
     if allow_code_exec:
         print(f"Code test mode: {code_test_mode}")
-    if allow_code_exec and code_test_mode != 'fast':
+    if allow_code_exec and code_test_mode != "fast":
         print(f"Code test timeout: {code_test_timeout_s:.2f}s")
-    if timing:
+    if timing_available:
         print("Timing stats: available (avg_s/p95_s per model/test_set)")
-    if failure_samples:
-        groups = sum(len(v) for v in failure_samples.values())
-        print(f"Failure samples: collected for {groups} model/test_set group(s)")
+    if failure_samples_groups:
+        print(f"Failure samples: collected for {failure_samples_groups} model/test_set group(s)")
 
-    if allow_code_exec:
-        for row in rows_with_tests:
-            model = row.get("model", "?")
-            test_set = row.get("test_set", "?")
-            task_id = row.get("task_id", "?")
-            prompt_preview = (row.get("prompt", "") or "").strip().replace("\n", " ")
-            if len(prompt_preview) > 120:
-                prompt_preview = prompt_preview[:120] + "..."
-            print(f"[code_tests] model={model} test_set={test_set} task={task_id} prompt=\"{prompt_preview}\"")
-            key = _row_key(row)
-            for line in code_test_lines.get(key, []):
-                print(f"  - {line}")
-            if not code_test_ok.get(key, False):
-                print("  => FAIL")
 
-    report_path = Path("report.md")
+def _print_code_test_details(
+    rows_with_tests: List[Dict],
+    *,
+    code_test_ok: Dict[tuple[str, str, int], bool],
+    code_test_lines: Dict[tuple[str, str, int], List[str]],
+) -> None:
+    for row in rows_with_tests:
+        model = row.get("model", "?")
+        test_set = row.get("test_set", "?")
+        task_id = row.get("task_id", "?")
+        prompt_preview = (row.get("prompt", "") or "").strip().replace("\n", " ")
+        if len(prompt_preview) > 120:
+            prompt_preview = prompt_preview[:120] + "..."
+        print(f"[code_tests] model={model} test_set={test_set} task={task_id} prompt=\"{prompt_preview}\"")
+        key = _row_key(row)
+        for line in code_test_lines.get(key, []):
+            print(f"  - {line}")
+        if not code_test_ok.get(key, False):
+            print("  => FAIL")
+
+
+def _write_report_md(
+    report_path: Path,
+    *,
+    models: List[str],
+    test_sets: List[str],
+    total: int,
+    error_count: int,
+    saved_codes: int,
+    allow_code_exec: bool,
+    code_test_mode: str,
+    code_test_timeout_s: float,
+    accuracies: Dict[str, Dict[str, float]],
+    overall_acc: Dict[str, float],
+    contains_all_stats: Dict[str, Dict[str, Tuple[int, int]]],
+    code_test_stats: Dict[str, Dict[str, Tuple[int, int]]],
+    code_test_failures: List[str],
+    errors: List[str],
+    timing: Dict[str, Dict[str, Dict[str, float]]],
+    failure_samples: Dict[str, Dict[str, List[Dict[str, Any]]]],
+) -> None:
     with report_path.open("w", encoding="utf-8") as f:
         f.write("# Benchmark Report\n\n")
         f.write("## Summary\n\n")
@@ -479,6 +510,84 @@ def main() -> None:
                                 f"  - task {task_id}: reasons={reasons} prompt=\"{item.get('prompt','')}\" response=\"{item.get('response','')}\"\n"
                             )
             f.write("\n")
+
+
+def main() -> None:
+    cfg = load_config(Path("config.yaml"))
+    allow_code_exec, code_test_mode, code_test_timeout_s = _load_report_settings(cfg)
+
+    results = _require_results(Path("results.json"))
+    rows_with_tests = _sorted_rows_with_code_tests(results)
+    code_test_ok, code_test_lines = _run_code_tests(
+        rows_with_tests,
+        allow_code_exec=allow_code_exec,
+        code_test_mode=code_test_mode,
+        code_test_timeout_s=code_test_timeout_s,
+    )
+
+    accuracies, overall_acc = compute_accuracy_and_overall(
+        results,
+        allow_code_exec=allow_code_exec,
+        code_test_ok=code_test_ok,
+    )
+    contains_all_stats = compute_contains_all_stats(results)
+    code_test_stats: Dict[str, Dict[str, Tuple[int, int]]] = {}
+    code_test_failures: List[str] = []
+    if allow_code_exec:
+        code_test_stats, code_test_failures = compute_code_test_stats(results, code_test_ok=code_test_ok)
+    saved_codes = save_code_artifacts(results, Path("artifacts"))
+    errors = collect_errors(results)
+    models = sorted({r["model"] for r in results})
+    test_sets = sorted({str(test_set) for r in results if (test_set := r.get("test_set"))})
+    total = len(results)
+    error_count = sum(1 for r in results if r.get("error"))
+    timing = compute_timing_stats(results)
+    failure_samples = collect_failure_samples(
+        results,
+        allow_code_exec=allow_code_exec,
+        code_test_ok=code_test_ok,
+        per_group_limit=3,
+    )
+
+    failure_samples_groups = sum(len(v) for v in failure_samples.values()) if failure_samples else 0
+    _print_console_summary(
+        models=models,
+        test_sets=test_sets,
+        total=total,
+        error_count=error_count,
+        allow_code_exec=allow_code_exec,
+        code_test_mode=code_test_mode,
+        code_test_timeout_s=code_test_timeout_s,
+        timing_available=bool(timing),
+        failure_samples_groups=failure_samples_groups,
+    )
+
+    if allow_code_exec:
+        _print_code_test_details(
+            rows_with_tests,
+            code_test_ok=code_test_ok,
+            code_test_lines=code_test_lines,
+        )
+
+    _write_report_md(
+        Path("report.md"),
+        models=models,
+        test_sets=test_sets,
+        total=total,
+        error_count=error_count,
+        saved_codes=saved_codes,
+        allow_code_exec=allow_code_exec,
+        code_test_mode=code_test_mode,
+        code_test_timeout_s=code_test_timeout_s,
+        accuracies=accuracies,
+        overall_acc=overall_acc,
+        contains_all_stats=contains_all_stats,
+        code_test_stats=code_test_stats,
+        code_test_failures=code_test_failures,
+        errors=errors,
+        timing=timing,
+        failure_samples=failure_samples,
+    )
 
 
 if __name__ == "__main__":
