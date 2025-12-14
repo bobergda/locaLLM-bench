@@ -7,10 +7,8 @@ import yaml
 from metrics import (
     DEFAULT_CODE_TEST_TIMEOUT_S,
     extract_python_code,
-    run_code_tests,
     run_code_tests_detailed,
     run_code_tests_detailed_inline,
-    run_code_tests_inline,
     score_contains_all,
     score_contains_any,
 )

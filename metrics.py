@@ -40,48 +40,6 @@ def extract_python_code(text: str) -> str:
         return generic[0].strip()
     return text.strip()
 
-
-def _eval_assert(namespace: Dict[str, Any], expr: str) -> bool:
-    try:
-        return bool(eval(expr, namespace))
-    except Exception:
-        return False
-
-
-def _run_code_tests_worker(output: str, tests: List[Dict[str, Any]], queue: Any) -> None:
-    code = extract_python_code(output)
-    if not code:
-        queue.put(False)
-        return
-    namespace: Dict[str, Any] = {}
-    try:
-        exec(code, namespace)
-    except Exception:
-        queue.put(False)
-        return
-    for test in tests:
-        if "assert" in test:
-            expr = test.get("assert")
-            if not expr or not _eval_assert(namespace, expr):
-                queue.put(False)
-                return
-            continue
-        expr = test.get("call")
-        expected = test.get("expected")
-        if not expr:
-            queue.put(False)
-            return
-        try:
-            value = eval(expr, namespace)
-        except Exception:
-            queue.put(False)
-            return
-        if value != expected:
-            queue.put(False)
-            return
-    queue.put(True)
-
-
 def _run_code_tests_detailed_worker(output: str, tests: List[Dict[str, Any]], queue: Any) -> None:
     code = extract_python_code(output)
     if not code:
@@ -130,38 +88,6 @@ def _run_code_tests_detailed_worker(output: str, tests: List[Dict[str, Any]], qu
             ok_all = False
 
     queue.put({"ok": ok_all, "lines": lines})
-
-
-def run_code_tests_inline(output: str, tests: List[Dict[str, Any]]) -> bool:
-    """
-    Fast path: executes code in-process (no timeout). Dangerous on untrusted outputs.
-    """
-    code = extract_python_code(output)
-    if not code:
-        return False
-    namespace: Dict[str, Any] = {}
-    try:
-        exec(code, namespace)
-    except Exception:
-        return False
-    for test in tests:
-        if "assert" in test:
-            expr = test.get("assert")
-            if not expr or not _eval_assert(namespace, expr):
-                return False
-            continue
-        expr = test.get("call")
-        expected = test.get("expected")
-        if not expr:
-            return False
-        try:
-            value = eval(expr, namespace)
-        except Exception:
-            return False
-        if value != expected:
-            return False
-    return True
-
 
 def run_code_tests_detailed_inline(output: str, tests: List[Dict[str, Any]]) -> tuple[bool, List[str]]:
     """
@@ -219,7 +145,8 @@ def run_code_tests_detailed(
     timeout_s: float = DEFAULT_CODE_TEST_TIMEOUT_S,
 ) -> tuple[bool, List[str]]:
     """
-    Like `run_code_tests`, but returns per-test lines suitable for printing.
+    Execute model-produced code and run simple assert-style checks.
+    Returns per-test lines suitable for printing.
     """
     ctx = _get_mp_context()
     queue: Any = ctx.Queue(maxsize=1)
@@ -238,28 +165,6 @@ def run_code_tests_detailed(
         return ok, [str(x) for x in lines]
     except Exception:
         return False, ["no result from worker (FAIL)"]
-
-
-def run_code_tests(output: str, tests: List[Dict[str, Any]], timeout_s: float = DEFAULT_CODE_TEST_TIMEOUT_S) -> bool:
-    """
-    Execute model-produced code and run simple assert-style checks.
-    Tests can be provided as {"assert": "expr"} or legacy {"call": "...", "expected": value}.
-    """
-    ctx = _get_mp_context()
-    queue: Any = ctx.Queue(maxsize=1)
-    proc = ctx.Process(target=_run_code_tests_worker, args=(output, tests, queue))
-    proc.daemon = True
-    proc.start()
-    proc.join(timeout_s)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=1)
-        return False
-    try:
-        return bool(queue.get_nowait())
-    except Exception:
-        return False
-
 
 def score_task(
     task: Dict[str, Any],
@@ -283,7 +188,8 @@ def score_task(
         checks.append(score_contains_all(output, task["asserts"]))
     if "code_tests" in task:
         if allow_code_exec:
-            checks.append(run_code_tests(output, task["code_tests"], timeout_s=code_test_timeout_s))
+            ok, _lines = run_code_tests_detailed(output, task["code_tests"], timeout_s=code_test_timeout_s)
+            checks.append(ok)
         else:
             checks.append(False)
     if not checks:
