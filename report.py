@@ -2,6 +2,7 @@ import json
 import os
 import re
 import html
+import argparse
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -731,6 +732,16 @@ def _default_results_path() -> Path:
     raise FileNotFoundError("No results.json found (run runner.py first).")
 
 
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Generate report.md from results.json")
+    p.add_argument(
+        "--results",
+        default=None,
+        help="Path to results.json (overrides auto-detected latest and LOCALLLM_RESULTS).",
+    )
+    return p.parse_args()
+
+
 def _run_code_tests(
     rows_with_tests: List[Dict],
     *,
@@ -909,11 +920,14 @@ def _write_report_md(
 
 
 def main() -> None:
+    args = _parse_args()
     cfg = load_config(Path("config.yaml"))
     allow_code_exec, code_test_mode, code_test_timeout_s = _load_report_settings(cfg)
 
-    results_path = _default_results_path()
+    # CLI args override env vars; env vars remain supported for backward compatibility.
+    results_path = Path(args.results) if args.results else _default_results_path()
     results = _require_results(results_path)
+
     output_dir = results_path.parent
     rows_with_tests = _sorted_rows_with_code_tests(results)
     code_test_ok, code_test_lines = _run_code_tests(
