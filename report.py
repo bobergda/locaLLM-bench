@@ -379,7 +379,7 @@ def main() -> None:
     saved_codes = save_code_artifacts(results, Path("artifacts"))
     errors = collect_errors(results)
     models = sorted({r["model"] for r in results})
-    test_sets = sorted({r.get("test_set") for r in results if r.get("test_set")})
+    test_sets = sorted({str(test_set) for r in results if (test_set := r.get("test_set"))})
     total = len(results)
     error_count = sum(1 for r in results if r.get("error"))
     timing = compute_timing_stats(results)
