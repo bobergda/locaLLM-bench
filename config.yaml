@@ -31,6 +31,3 @@ code_test_timeout_s: 2.0
 # Optional Ollama generation options passed as `options` to `client.generate(...)`.
 # Common keys: temperature, seed, num_ctx, top_p, top_k, repeat_penalty.
 generate_options: {}
-
-# Report: when true, print each code_tests assertion result to stdout (requires unsafe_code_exec).
-report_verbose_code_tests: true

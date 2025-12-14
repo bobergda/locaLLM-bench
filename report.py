@@ -340,7 +340,6 @@ def compute_code_test_stats(
 def main() -> None:
     cfg = load_config(Path("config.yaml"))
     allow_code_exec = bool(cfg.get("unsafe_code_exec", False))
-    verbose_code_tests = bool(cfg.get("report_verbose_code_tests", False))
     code_test_mode = str(cfg.get("code_test_mode", "safe")).strip().lower()
     if code_test_mode not in ("safe", "fast"):
         raise ValueError("config.yaml: code_test_mode must be 'safe' or 'fast'")
@@ -360,17 +359,11 @@ def main() -> None:
             key = _row_key(row)
             tests = row["code_tests"]
             output = row.get("response", "") or ""
-            if verbose_code_tests:
-                if code_test_mode == "fast":
-                    ok, lines = run_code_tests_detailed_inline(output, tests)
-                else:
-                    ok, lines = run_code_tests_detailed(output, tests, timeout_s=code_test_timeout_s)
-                code_test_lines[key] = lines
+            if code_test_mode == "fast":
+                ok, lines = run_code_tests_detailed_inline(output, tests)
             else:
-                if code_test_mode == "fast":
-                    ok = run_code_tests_inline(output, tests)
-                else:
-                    ok = run_code_tests(output, tests, timeout_s=code_test_timeout_s)
+                ok, lines = run_code_tests_detailed(output, tests, timeout_s=code_test_timeout_s)
+            code_test_lines[key] = lines
             code_test_ok[key] = bool(ok)
 
     accuracies, overall_acc = compute_accuracy_and_overall(
@@ -411,10 +404,7 @@ def main() -> None:
         groups = sum(len(v) for v in failure_samples.values())
         print(f"Failure samples: collected for {groups} model/test_set group(s)")
 
-    if verbose_code_tests and not allow_code_exec:
-        print("Verbose code tests requested but unsafe code execution is DISABLED; skipping per-test output.")
-
-    if verbose_code_tests and allow_code_exec:
+    if allow_code_exec:
         for row in rows_with_tests:
             model = row.get("model", "?")
             test_set = row.get("test_set", "?")
