@@ -39,10 +39,6 @@ run_report() {
     options+=("latest (results/latest/results.json)")
     paths+=("results/latest/results.json")
   fi
-  if [ -f "tmp/results.json" ]; then
-    options+=("tmp (tmp/results.json)")
-    paths+=("tmp/results.json")
-  fi
   if [ -d "results/runs" ]; then
     mapfile -t run_paths < <(find results/runs -maxdepth 2 -type f -name results.json -print 2>/dev/null | sort -r)
     local limit=25

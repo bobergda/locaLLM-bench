@@ -691,15 +691,6 @@ def _find_latest_run_dir() -> Path | None:
     if latest_link.exists() and latest_link.is_dir():
         return latest_link.resolve()
 
-    latest_txt = Path("results") / "latest.txt"
-    if latest_txt.exists():
-        try:
-            p = Path(latest_txt.read_text(encoding="utf-8").strip())
-            if p.exists() and p.is_dir():
-                return p
-        except Exception:
-            pass
-
     root = Path("results") / "runs"
     if not root.exists():
         return None
@@ -713,20 +704,10 @@ def _find_latest_run_dir() -> Path | None:
 def _default_results_path() -> Path:
     """
     Default results.json resolution:
-    1) results/latest/results.json
-    2) latest dir under results/runs/*/results.json
-    3) ./results.json (legacy)
-    4) ./results/results.json (legacy)
+    latest dir under results/runs/*/results.json
     """
-    if (env_path := os.environ.get("LOCALLLM_RESULTS")):
-        return Path(env_path)
-
     if (latest_dir := _find_latest_run_dir()) is not None:
         candidate = latest_dir / "results.json"
-        if candidate.exists():
-            return candidate
-
-    for candidate in (Path("results.json"), Path("results") / "results.json"):
         if candidate.exists():
             return candidate
     raise FileNotFoundError("No results.json found (run runner.py first).")
