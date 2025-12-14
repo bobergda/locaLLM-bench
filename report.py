@@ -97,6 +97,60 @@ def format_timing_table(timing: Dict[str, Dict[str, Dict[str, float]]]) -> str:
     return "\n".join(lines)
 
 
+def compute_tokens_per_sec_stats(results: List[Dict]) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """
+    Returns throughput stats per model/test_set based on eval_count / total_duration_s:
+    count, avg_tps, p50_tps, p95_tps.
+    """
+    buckets: Dict[str, Dict[str, List[float]]] = {}
+    for row in results:
+        model = row.get("model")
+        test_set = row.get("test_set")
+        if not model or not test_set:
+            continue
+
+        eval_count = row.get("eval_count")
+        total_duration_s = row.get("total_duration_s")
+        if eval_count is None or total_duration_s is None:
+            continue
+        try:
+            tokens = float(eval_count)
+            dur = float(total_duration_s)
+        except Exception:
+            continue
+        if tokens <= 0 or dur <= 0:
+            continue
+        buckets.setdefault(model, {}).setdefault(test_set, []).append(tokens / dur)
+
+    stats: Dict[str, Dict[str, Dict[str, float]]] = {}
+    for model in sorted(buckets):
+        stats[model] = {}
+        for test_set in sorted(buckets[model]):
+            vals = sorted(buckets[model][test_set])
+            avg = sum(vals) / len(vals) if vals else 0.0
+            stats[model][test_set] = {
+                "count": float(len(vals)),
+                "avg_tps": avg,
+                "p50_tps": _percentile(vals, 50),
+                "p95_tps": _percentile(vals, 95),
+            }
+    return stats
+
+
+def format_tokens_per_sec_table(throughput: Dict[str, Dict[str, Dict[str, float]]]) -> str:
+    test_sets = sorted({name for model_data in throughput.values() for name in model_data})
+    header = ["Model/Test set"] + test_sets
+    lines = ["|" + "|".join(header) + "|", "|" + "|".join(["---"] * len(header)) + "|"]
+    for model in sorted(throughput):
+        for metric in ("avg_tps", "p95_tps"):
+            row = [f"{model} {metric}"]
+            for test_set in test_sets:
+                val = throughput.get(model, {}).get(test_set, {}).get(metric)
+                row.append(f"{val:.1f}" if val is not None else "")
+            lines.append("|" + "|".join(row) + "|")
+    return "\n".join(lines)
+
+
 def _truncate_text(text: str, *, max_chars: int) -> tuple[str, bool]:
     if max_chars <= 0:
         return "", bool(text)
@@ -143,6 +197,21 @@ def _format_response_pre_block(response: str, *, highlight_phrases: List[str], m
     clipped, was_truncated = _truncate_text(response or "", max_chars=max_chars)
     body = _highlight_html(clipped, highlight_phrases)
     return f"<pre>{body}</pre>", was_truncated
+
+
+def _row_tokens_per_sec(row: Dict[str, Any]) -> float | None:
+    eval_count = row.get("eval_count")
+    total_duration_s = row.get("total_duration_s")
+    if eval_count is None or total_duration_s is None:
+        return None
+    try:
+        tokens = float(eval_count)
+        dur = float(total_duration_s)
+    except Exception:
+        return None
+    if tokens <= 0 or dur <= 0:
+        return None
+    return tokens / dur
 
 
 def _failure_reasons(
@@ -254,6 +323,8 @@ def collect_text_check_samples(
                 "task_id": row.get("task_id"),
                 "prompt": row.get("prompt", "") or "",
                 "response": row.get("response", "") or "",
+                "total_duration_s": row.get("total_duration_s"),
+                "eval_count": row.get("eval_count"),
                 "ok": ok,
                 "expected": row.get("expected"),
                 "contains_all": row.get("contains_all") or [],
@@ -307,8 +378,11 @@ def format_text_check_samples_md(
         missing_asserts = _missing_phrases(response, asserts) if asserts else []
         matched_any = [p for p in contains_any if p.lower() in response.lower()] if contains_any else []
 
+        tps = _row_tokens_per_sec(row)
+        tps_txt = f"{tps:.1f}" if tps is not None else "n/a"
         summary = (
             f"{model} / {test_set} / task {task_id} — {'OK' if ok_overall else 'FAIL'} — "
+            f"tps={tps_txt} — "
             f"{html.escape(prompt_preview)}"
         )
         lines.append("<details>")
@@ -351,6 +425,60 @@ def format_text_check_samples_md(
         lines.append("")
         lines.append("</details>")
         lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_per_request_stats_md(
+    results: List[Dict[str, Any]],
+    *,
+    max_prompt_chars: int = 240,
+) -> str:
+    """
+    Per-row stats in the same order as results.json.
+    """
+    lines: List[str] = []
+    any_rows = False
+    for i, row in enumerate(results):
+        model = str(row.get("model", "?"))
+        test_set = str(row.get("test_set", "?"))
+        task_id = row.get("task_id", "?")
+        prompt = (row.get("prompt") or "").strip()
+        prompt_preview, prompt_trunc = _truncate_text(prompt.replace("\n", " "), max_chars=max_prompt_chars)
+        if prompt_trunc:
+            prompt_preview += " (truncated)"
+
+        dur = row.get("total_duration_s")
+        eval_count = row.get("eval_count")
+        tps = _row_tokens_per_sec(row)
+        any_rows = True
+
+        dur_txt = f"{float(dur):.2f}s" if dur is not None else "n/a"
+        eval_txt = str(eval_count) if eval_count is not None else "n/a"
+        tps_txt = f"{tps:.1f}" if tps is not None else "n/a"
+        ok_txt = "ERROR" if row.get("error") else "OK"
+
+        summary = (
+            f"{i:04d} — {model} / {test_set} / task {task_id} — {ok_txt} — "
+            f"tps={tps_txt}, tokens={eval_txt}, dur={dur_txt} — {html.escape(prompt_preview)}"
+        )
+        lines.append("<details>")
+        lines.append(f"<summary>{summary}</summary>")
+        lines.append("")
+        lines.append(f"- model: `{model}`")
+        lines.append(f"- test_set: `{test_set}`")
+        lines.append(f"- task_id: `{task_id}`")
+        lines.append(f"- total_duration_s: `{dur}`")
+        lines.append(f"- eval_count: `{eval_count}`")
+        lines.append(f"- tokens_per_sec: `{tps}`")
+        if row.get("error"):
+            lines.append(f"- error: `{row.get('error')}`")
+        lines.append(f"- prompt: {prompt_preview}")
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    if not any_rows:
+        return "(no results to display)\n"
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -712,8 +840,10 @@ def _write_report_md(
     code_test_failures: List[str],
     errors: List[str],
     timing: Dict[str, Dict[str, Dict[str, float]]],
+    throughput: Dict[str, Dict[str, Dict[str, float]]],
     failure_samples: Dict[str, Dict[str, List[Dict[str, Any]]]],
     text_check_samples_md: str,
+    per_request_stats_md: str,
 ) -> None:
     with report_path.open("w", encoding="utf-8") as f:
         f.write("# Benchmark Report\n\n")
@@ -757,6 +887,13 @@ def _write_report_md(
             f.write("### Timing (avg_s and p95_s)\n\n")
             f.write(format_timing_table(timing))
             f.write("\n\n")
+        if throughput:
+            f.write("### Throughput (tokens_per_sec avg and p95)\n\n")
+            f.write(format_tokens_per_sec_table(throughput))
+            f.write("\n\n")
+        f.write("### Per-request stats\n\n")
+        f.write(per_request_stats_md)
+        f.write("\n")
         f.write("### Text check details\n\n")
         f.write(text_check_samples_md)
         f.write("\n")
@@ -812,6 +949,8 @@ def main() -> None:
     total = len(results)
     error_count = sum(1 for r in results if r.get("error"))
     timing = compute_timing_stats(results)
+    throughput = compute_tokens_per_sec_stats(results)
+    per_request_stats_md = format_per_request_stats_md(results)
     failure_samples = collect_failure_samples(
         results,
         allow_code_exec=allow_code_exec,
@@ -858,8 +997,10 @@ def main() -> None:
         code_test_failures=code_test_failures,
         errors=errors,
         timing=timing,
+        throughput=throughput,
         failure_samples=failure_samples,
         text_check_samples_md=text_check_samples_md,
+        per_request_stats_md=per_request_stats_md,
     )
 
 
