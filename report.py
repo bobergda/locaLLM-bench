@@ -704,10 +704,21 @@ def _find_latest_run_dir() -> Path | None:
 def _default_results_path() -> Path:
     """
     Default results.json resolution:
-    latest dir under results/runs/*/results.json
+    1) LOCALLLM_RESULTS env
+    2) results/latest/results.json
+    3) latest dir under results/runs/*/results.json
+    4) ./results.json (legacy)
+    5) ./results/results.json (legacy)
     """
+    if (env_path := os.environ.get("LOCALLLM_RESULTS")):
+        return Path(env_path)
+
     if (latest_dir := _find_latest_run_dir()) is not None:
         candidate = latest_dir / "results.json"
+        if candidate.exists():
+            return candidate
+
+    for candidate in (Path("results.json"), Path("results") / "results.json"):
         if candidate.exists():
             return candidate
     raise FileNotFoundError("No results.json found (run runner.py first).")
@@ -813,6 +824,94 @@ def _format_code_test_details_text(
     return "\n".join(lines)
 
 
+def _artifact_filename(model: str, test_set: str, task_id: Any) -> str:
+    safe_model = str(model).replace("/", "_").replace(":", "_")
+    safe_set = str(test_set).replace("/", "_").replace(":", "_")
+    return f"{safe_model}_{safe_set}_task{int(task_id)}.py"
+
+
+def _format_code_test_lines_pre(lines_in: List[str]) -> str:
+    if not lines_in:
+        return "<pre>(no code test output)</pre>"
+    rendered: List[str] = []
+    for line in lines_in:
+        s = str(line)
+        esc = html.escape(s)
+        if "(FAIL)" in s or " FAIL" in s:
+            rendered.append(f"<mark>{esc}</mark>")
+        else:
+            rendered.append(esc)
+    return "<pre>" + "\n".join(rendered) + "</pre>"
+
+
+def format_code_test_details_md(
+    results: List[Dict[str, Any]],
+    *,
+    allow_code_exec: bool,
+    code_test_ok: Dict[tuple[str, str, int], bool],
+    code_test_lines: Dict[tuple[str, str, int], List[str]],
+    max_prompt_chars: int = 240,
+    max_code_chars: int = 1600,
+) -> str:
+    if not allow_code_exec:
+        return "(skipped: unsafe_code_exec=false)\n"
+
+    lines: List[str] = []
+    any_rows = False
+    last_group: tuple[str, str] | None = None
+    for row in results:
+        if not row.get("code_tests"):
+            continue
+        model = str(row.get("model", "?"))
+        test_set = str(row.get("test_set", "?"))
+        task_id = row.get("task_id", "?")
+        group = (model, test_set)
+        if group != last_group:
+            lines.append(f"#### {model} / {test_set}\n")
+            last_group = group
+        prompt = (row.get("prompt") or "").strip()
+        prompt_preview, prompt_trunc = _truncate_text(prompt.replace("\n", " "), max_chars=max_prompt_chars)
+        if prompt_trunc:
+            prompt_preview += " (truncated)"
+
+        key = _row_key(row)
+        ok = bool(code_test_ok.get(key, False))
+        status = "OK" if ok else "FAIL"
+
+        tps = _row_tokens_per_sec(row)
+        tps_txt = f"{tps:.1f}" if tps is not None else "n/a"
+
+        artifact = _artifact_filename(model, test_set, task_id)
+        any_rows = True
+
+        summary = f"task {task_id} — {status} — tps={tps_txt} — {html.escape(prompt_preview)}"
+        lines.append("<details>")
+        lines.append(f"<summary>{summary}</summary>")
+        lines.append("")
+        lines.append(f"- prompt: {prompt_preview}")
+        lines.append(f"- artifact: `artifacts/{artifact}`")
+
+        code = extract_python_code(row.get("response", "") or "")
+        code_clip, code_trunc = _truncate_text(code, max_chars=max_code_chars)
+        lines.append("- code:")
+        if code_trunc:
+            lines.append(f"  - note: truncated to {max_code_chars} chars")
+        lines.append("")
+        lines.append("<pre>" + html.escape(code_clip) + "</pre>")
+        lines.append("")
+
+        lines.append("- code_tests:")
+        lines.append("")
+        lines.append(_format_code_test_lines_pre(code_test_lines.get(key, [])))
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    if not any_rows:
+        return "(no code_tests to display)\n"
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _write_report_md(
     report_path: Path,
     *,
@@ -836,6 +935,7 @@ def _write_report_md(
     failure_samples: Dict[str, Dict[str, List[Dict[str, Any]]]],
     text_check_samples_md: str,
     per_request_stats_md: str,
+    code_test_details_md: str,
 ) -> None:
     with report_path.open("w", encoding="utf-8") as f:
         f.write("# Benchmark Report\n\n")
@@ -889,15 +989,9 @@ def _write_report_md(
         f.write("### Text check details\n\n")
         f.write(text_check_samples_md)
         f.write("\n")
-        f.write("### Code tests report\n\n")
-        if allow_code_exec and code_test_details_text:
-            f.write("```text\n")
-            f.write(code_test_details_text)
-            f.write("\n```\n\n")
-        elif allow_code_exec:
-            f.write("(no code_tests to display)\n\n")
-        else:
-            f.write("(skipped: unsafe_code_exec=false)\n\n")
+        f.write("### Code test details\n\n")
+        f.write(code_test_details_md)
+        f.write("\n")
 
 
 def main() -> None:
@@ -925,6 +1019,12 @@ def main() -> None:
         )
         if allow_code_exec
         else ""
+    )
+    code_test_details_md = format_code_test_details_md(
+        results,
+        allow_code_exec=allow_code_exec,
+        code_test_ok=code_test_ok,
+        code_test_lines=code_test_lines,
     )
 
     accuracies, overall_acc = compute_accuracy_and_overall(
@@ -996,6 +1096,7 @@ def main() -> None:
         failure_samples=failure_samples,
         text_check_samples_md=text_check_samples_md,
         per_request_stats_md=per_request_stats_md,
+        code_test_details_md=code_test_details_md,
     )
 
 
