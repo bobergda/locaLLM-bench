@@ -232,12 +232,11 @@ def _score_row_text_only(row: Dict[str, Any]) -> bool:
 
 def collect_text_check_samples(
     results: List[Dict],
-    *,
-    per_group_limit: int = 3,
 ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """
-    Returns dict[model][test_set] -> list of sample rows failing *text* checks only
-    (expected/contains_all/contains_any/asserts). Deterministic order.
+    Returns dict[model][test_set] -> list of rows with *text* checks only
+    (expected/contains_all/contains_any/asserts), including both pass and fail.
+    Deterministic order.
     """
     samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
@@ -250,20 +249,17 @@ def collect_text_check_samples(
 
     for (model, test_set), rows in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
         for row in sorted(rows, key=lambda r: int(r.get("task_id", 0))):
-            if len(samples.get(model, {}).get(test_set, [])) >= per_group_limit:
-                continue
             has_text_checks = any(
                 row.get(k) is not None for k in ("expected", "contains_all", "contains_any", "asserts")
             )
             if not has_text_checks:
                 continue
-            ok = _score_row_text_only(row)
-            if ok:
-                continue
+            ok = bool(_score_row_text_only(row))
             item = {
                 "task_id": row.get("task_id"),
                 "prompt": row.get("prompt", "") or "",
                 "response": row.get("response", "") or "",
+                "ok": ok,
                 "expected": row.get("expected"),
                 "contains_all": row.get("contains_all") or [],
                 "contains_any": row.get("contains_any") or [],
@@ -286,7 +282,7 @@ def format_text_check_samples_md(
     max_response_chars: int = 1600,
 ) -> str:
     if not samples:
-        return "(no text check failures to display)\n"
+        return "(no text checks to display)\n"
 
     lines: List[str] = []
     for model in sorted(samples):
@@ -299,6 +295,7 @@ def format_text_check_samples_md(
                 task_id = row.get("task_id", "?")
                 prompt = (row.get("prompt") or "").strip()
                 response = row.get("response") or ""
+                ok_overall = bool(row.get("ok", False)) and not bool(row.get("error"))
 
                 prompt_preview, prompt_trunc = _truncate_text(prompt.replace("\n", " "), max_chars=max_prompt_chars)
                 if prompt_trunc:
@@ -313,27 +310,30 @@ def format_text_check_samples_md(
                 missing_asserts = _missing_phrases(response, asserts) if asserts else []
                 matched_any = [p for p in contains_any if p.lower() in response.lower()] if contains_any else []
 
-                lines.append(f"- task {task_id}")
-                lines.append(f"  - prompt: {prompt_preview}")
+                summary = f"task {task_id} — {'OK' if ok_overall else 'FAIL'} — {html.escape(prompt_preview)}"
+                lines.append("<details>")
+                lines.append(f"<summary>{summary}</summary>")
+                lines.append("")
+                lines.append(f"- prompt: {prompt_preview}")
                 if expected is not None:
                     ok = response.strip() == str(expected).strip()
-                    lines.append(f"  - expected: {'OK' if ok else 'FAIL'} (`{str(expected).strip()}`)")
+                    lines.append(f"- expected: {'OK' if ok else 'FAIL'} (`{str(expected).strip()}`)")
                 if contains_all:
-                    lines.append(f"  - contains_all: {'OK' if not missing_all else 'FAIL'} ({', '.join(contains_all)})")
+                    lines.append(f"- contains_all: {'OK' if not missing_all else 'FAIL'} ({', '.join(contains_all)})")
                     if missing_all:
-                        lines.append(f"    - missing: {', '.join(missing_all)}")
+                        lines.append(f"  - missing: {', '.join(missing_all)}")
                 if contains_any:
                     lines.append(
-                        f"  - contains_any: {'OK' if matched_any else 'FAIL'} ({', '.join(contains_any)})"
+                        f"- contains_any: {'OK' if matched_any else 'FAIL'} ({', '.join(contains_any)})"
                     )
                     if matched_any:
-                        lines.append(f"    - matched: {', '.join(matched_any)}")
+                        lines.append(f"  - matched: {', '.join(matched_any)}")
                     else:
-                        lines.append(f"    - missing any-of: {', '.join(contains_any)}")
+                        lines.append(f"  - missing any-of: {', '.join(contains_any)}")
                 if asserts:
-                    lines.append(f"  - asserts: {'OK' if not missing_asserts else 'FAIL'} ({', '.join(asserts)})")
+                    lines.append(f"- asserts: {'OK' if not missing_asserts else 'FAIL'} ({', '.join(asserts)})")
                     if missing_asserts:
-                        lines.append(f"    - missing: {', '.join(missing_asserts)}")
+                        lines.append(f"  - missing: {', '.join(missing_asserts)}")
 
                 highlight_phrases = []
                 highlight_phrases.extend([p for p in contains_all if p.lower() in response.lower()])
@@ -345,11 +345,13 @@ def format_text_check_samples_md(
                     highlight_phrases=highlight_phrases,
                     max_chars=max_response_chars,
                 )
-                lines.append("  - response:")
+                lines.append("- response:")
                 if resp_trunc:
-                    lines.append(f"    - note: truncated to {max_response_chars} chars")
+                    lines.append(f"  - note: truncated to {max_response_chars} chars")
                 lines.append("")
                 lines.append(pre)
+                lines.append("")
+                lines.append("</details>")
                 lines.append("")
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -758,7 +760,7 @@ def _write_report_md(
             f.write("### Timing (avg_s and p95_s)\n\n")
             f.write(format_timing_table(timing))
             f.write("\n\n")
-        f.write("### Text check samples (failed)\n\n")
+        f.write("### Text check details\n\n")
         f.write(text_check_samples_md)
         f.write("\n")
         f.write("### Code tests report\n\n")
@@ -819,7 +821,7 @@ def main() -> None:
         code_test_ok=code_test_ok,
         per_group_limit=3,
     )
-    text_check_samples_md = format_text_check_samples_md(collect_text_check_samples(results, per_group_limit=3))
+    text_check_samples_md = format_text_check_samples_md(collect_text_check_samples(results))
 
     failure_samples_groups = sum(len(v) for v in failure_samples.values()) if failure_samples else 0
     _print_console_summary(
