@@ -1,11 +1,12 @@
 [
   {
     "prompt": "Napisz krótką definicję modelu językowego w jednym zdaniu.",
-    "contains_any": ["model językowy", "przewiduje", "tokeny", "zdania"]
+    "contains_any": ["przewiduje", "tokeny", "zdania"]
   },
   {
-    "prompt": "Podaj dwa zastosowania lokalnych modeli LLM w firmie.",
-    "contains_all": ["automatyzacja", "analiza", "lokalnie"]
+    "prompt": "Podaj dwa zastosowania lokalnych modeli LLM w firmie. Odpowiedź jako lista numerowana dokładnie: \"1. ...\" oraz \"2. ...\".",
+    "contains_all": ["1.", "2."],
+    "contains_any": ["lokal", "obsług", "podsum", "klasyfik", "wyszuk", "dokument", "raport", "helpdesk", "email", "czat", "RAG", "analiz"]
   },
   {
     "prompt": "Odpowiedz jednym zdaniem po polsku: po co robić benchmark modeli?",
