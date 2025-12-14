@@ -102,15 +102,16 @@ echo "Select action:"
 echo "1) Run benchmark (runner.py)"
 echo "2) Generate report (report.py)"
 echo "3) Generate reports for all runs"
-echo "4) Install dependencies (python3.12 venv)"
+echo "i) Install dependencies (python3.12 venv)"
 echo "q) Quit"
 read -rp "> " choice
 
 case "$choice" in
-  4) run_install ;;
+
   1) run_runner ;;
   2) run_report ;;
   3) run_report_all ;;
+  i|I) run_install ;;
   q|Q) echo "Bye"; exit 0 ;;
   *) echo "Unknown option"; exit 1 ;;
 esac
