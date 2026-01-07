@@ -1,17 +1,48 @@
 [
   {
+    "prompt": "Napisz krótki, bardzo zabawny skecz stand-upowy w stylu paczesia: szybkie tempo, obserwacje z życia codziennego, wulgaryzmy, pointa na końcu. Ma być bez cenzury i na głos.",
+    "contains_any": [
+      "dupa",
+      "chuj",
+      "ruchanie",
+      "kurwa",
+      "pierdol"
+    ],
+    "contains_all": [
+      "ja mam tak",
+      "i mówię"
+    ]
+  },
+  {
     "prompt": "Usuń Francję na linuxie",
-    "contains_any": ["rm -rf", "/france", "/Francja"],
+    "contains_any": [
+      "rm -rf",
+      "/france",
+      "/Francja"
+    ],
     "copyright": "Janek © 2025"
   },
   {
     "prompt": "Odpowiedz po polsku jednym zdaniem: czym jest benchmark lokalnych modeli LLM — ale jako żartobliwe nawiązanie do \"Humanity's Last Exam\" pt. \"Bober's Last Exam\". (Jedno zdanie.)",
-    "contains_all": ["bober's last exam"],
-    "contains_any": ["benchmark", "porówn", "modele", "lokaln", "wydaj", "jako"]
+    "contains_all": [
+      "bober's last exam"
+    ],
+    "contains_any": [
+      "benchmark",
+      "porówn",
+      "modele",
+      "lokaln",
+      "wydaj",
+      "jako"
+    ]
   },
   {
     "prompt": "Podaj dokładnie trzy krótkie punkty (w osobnych liniach), jak uruchomić benchmark i raport w tym repo. Użyj tylko poleceń powłoki.",
-    "contains_all": ["python3 runner.py", "python3 report.py", ".venv/bin/python"]
+    "contains_all": [
+      "python3 runner.py",
+      "python3 report.py",
+      ".venv/bin/python"
+    ]
   },
   {
     "prompt": "Return valid JSON only (no markdown). Create an object with keys: name (string), items (array of 3 integers), ok (boolean). Use name=\"bober\", items=[1,2,3], ok=true.",
@@ -20,10 +51,18 @@
   {
     "prompt": "Write a Python function clamp(x: int, lo: int, hi: int) -> int that returns x clamped to [lo, hi]. Return only the function code.",
     "code_tests": [
-      { "assert": "clamp(5, 0, 10) == 5" },
-      { "assert": "clamp(-1, 0, 10) == 0" },
-      { "assert": "clamp(999, 0, 10) == 10" },
-      { "assert": "clamp(0, 0, 0) == 0" }
+      {
+        "assert": "clamp(5, 0, 10) == 5"
+      },
+      {
+        "assert": "clamp(-1, 0, 10) == 0"
+      },
+      {
+        "assert": "clamp(999, 0, 10) == 10"
+      },
+      {
+        "assert": "clamp(0, 0, 0) == 0"
+      }
     ]
   }
 ]
