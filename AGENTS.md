@@ -42,6 +42,18 @@ Each entry is an object with `prompt` plus optional scoring keys:
 - Use `config.yaml`: `log_level`, `include_test_sets`, `task_limit`.
 - Prefer small, fast runs (task limits) during iteration.
 
+## Advanced options
+- **Streaming (live response reading)**:
+  - In `runner.py:call_ollama()`, change `"stream": False` to `"stream": True` for real-time token output.
+  - When enabled, responses arrive progressively instead of waiting for completion.
+  - Note: streaming requires handling response chunks differently (iterate over response instead of single JSON).
+
+- **Deep thinking / thinking process display**:
+  - Some models support extended reasoning via `<thinking>` tags or special prompts.
+  - To enable: add thinking-specific prompts to test files or modify `generate_options` in `config.yaml`.
+  - Example: set `"temperature": 0.7` and add system prompt requesting step-by-step reasoning.
+  - Model output with thinking tags should be parsed to show reasoning separate from final answer.
+
 ## How to validate changes
 - Minimum: `python3 -m py_compile runner.py metrics.py report.py`
 - Quick smoke test: set `task_limit: 1`, run `python3 runner.py`, then `python3 report.py`
