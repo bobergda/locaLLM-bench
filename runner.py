@@ -183,14 +183,36 @@ def call_ollama(
     else:
         # Streaming mode: collect chunks and display live
         response_chunks = []
+        thinking_chunks = []
         eval_count = None
         is_first_chunk = True
+        in_thinking = False
 
         logger.info("Starting streaming response...")
         print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
 
         try:
             for chunk in client.generate(**payload):
+                # Check for native thinking support from API
+                if show_thinking:
+                    thinking_text = (
+                        chunk.get("thinking")
+                        or chunk.get("message", {}).get("thinking")
+                    )
+
+                    if thinking_text:
+                        thinking_chunks.append(thinking_text)
+                        if not in_thinking:
+                            print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
+                            in_thinking = True
+                        print(f"{Colors.DIM}{thinking_text}{Colors.RESET}", end="", flush=True)
+                        continue
+
+                    if in_thinking and chunk.get("response"):
+                        print()  # Newline after thinking
+                        in_thinking = False
+
+                # Handle regular response text
                 chunk_text = chunk.get("response", "")
                 if chunk_text:
                     response_chunks.append(chunk_text)
@@ -201,6 +223,8 @@ def call_ollama(
                 if chunk.get("done", False):
                     eval_count = chunk.get("eval_count")
 
+            if in_thinking:
+                print()  # Newline if we ended in thinking mode
             print()  # Newline after streaming
 
         except Exception as e:
@@ -209,16 +233,21 @@ def call_ollama(
 
         elapsed = time.perf_counter() - start
         response_text = "".join(response_chunks)
+        native_thinking = "".join(thinking_chunks) if thinking_chunks else None
 
-        # Process thinking tags if enabled
+        # Process thinking tags from text as fallback (if no native thinking)
         thinking_blocks = []
-        if show_thinking and response_text:
-            thinking_blocks, response_text = extract_thinking(response_text)
-            if thinking_blocks:
-                logger.info("Extracted %d thinking block(s) from streamed response", len(thinking_blocks))
-                for i, thinking in enumerate(thinking_blocks, 1):
-                    print_thinking_block(thinking, i)
-                    logger.debug("Thinking block #%d:\n%s", i, thinking.strip())
+        if show_thinking:
+            if native_thinking:
+                thinking_blocks = [native_thinking]
+                logger.info("Captured native thinking from API (%d chars)", len(native_thinking))
+            elif response_text:
+                thinking_blocks, response_text = extract_thinking(response_text)
+                if thinking_blocks:
+                    logger.info("Extracted %d thinking block(s) from streamed response", len(thinking_blocks))
+                    for i, thinking in enumerate(thinking_blocks, 1):
+                        print_thinking_block(thinking, i)
+                        logger.debug("Thinking block #%d:\n%s", i, thinking.strip())
 
         logger.info("Streaming completed model=%s in %.2fs (tokens=%s)", model, elapsed, eval_count or "N/A")
 

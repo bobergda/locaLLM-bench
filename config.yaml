@@ -14,7 +14,7 @@ tests_dir: "tests"
 
 # Runner selection and logging.
 log_level: "DEBUG" # DEBUG|INFO|WARNING|ERROR
-include_test_sets: [ "bober_last_exam" ] # empty list = all
+include_test_sets: [ "code" ] # empty list = all
 task_start_id: 0 # 0-based index of the task to start from within each test set
 task_limit: 1 # how many tasks to run from task_start_id; null/0 = run to the end
 
