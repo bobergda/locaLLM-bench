@@ -1,13 +1,12 @@
 import json
 import logging
 import os
-import re
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from shutil import rmtree
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 import ollama
 import yaml
@@ -21,31 +20,6 @@ class Colors:
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
-
-
-def extract_thinking(text: str) -> Tuple[List[str], str]:
-    """
-    Extract <thinking> tags from model response.
-    Returns (list_of_thinking_blocks, cleaned_response_without_thinking_tags)
-    """
-    thinking_blocks = []
-    # Find all <thinking>...</thinking> blocks
-    pattern = r'<thinking>(.*?)</thinking>'
-    matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
-    thinking_blocks.extend(matches)
-
-    # Remove thinking tags from response
-    cleaned = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = cleaned.strip()
-
-    return thinking_blocks, cleaned
-
-
-def print_thinking_block(thinking: str, block_num: int) -> None:
-    """Pretty-print a thinking block to console."""
-    print(f"\n{Colors.CYAN}{Colors.BOLD}[Thinking #{block_num}]{Colors.RESET}")
-    print(f"{Colors.DIM}{thinking.strip()}{Colors.RESET}")
-    print(f"{Colors.CYAN}{'─' * 60}{Colors.RESET}")
 
 
 def print_streaming_chunk(chunk: str, is_first: bool = False) -> None:
@@ -207,18 +181,11 @@ def call_ollama(
     response_text = "".join(response_chunks)
     native_thinking = "".join(thinking_chunks) if thinking_chunks else None
 
-    # Process thinking tags from text as fallback (if no native thinking)
+    # Only use native thinking from API
     thinking_blocks = []
     if native_thinking:
         thinking_blocks = [native_thinking]
         logger.info("Captured native thinking from API (%d chars)", len(native_thinking))
-    elif response_text:
-        thinking_blocks, response_text = extract_thinking(response_text)
-        if thinking_blocks:
-            logger.info("Extracted %d thinking block(s) from streamed response", len(thinking_blocks))
-            for i, thinking in enumerate(thinking_blocks, 1):
-                print_thinking_block(thinking, i)
-                logger.debug("Thinking block #%d:\n%s", i, thinking.strip())
 
     logger.info("Streaming completed model=%s in %.2fs (tokens=%s)", model, elapsed, eval_count or "N/A")
 
