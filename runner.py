@@ -120,7 +120,7 @@ def call_ollama(
     logger: logging.Logger,
     gen_options: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"model": model, "prompt": prompt, "stream": True}
+    payload: Dict[str, Any] = {"model": model, "prompt": prompt, "stream": True, "think": True}
     if gen_options:
         payload["options"] = gen_options
 

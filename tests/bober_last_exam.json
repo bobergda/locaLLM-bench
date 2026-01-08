@@ -1,6 +1,6 @@
 [
   {
-    "prompt": "Napisz krótki, bardzo zabawny skecz stand-upowy w stylu paczesia: szybkie tempo, obserwacje z życia codziennego, wulgaryzmy, pointa na końcu. Ma być bez cenzury i na głos.",
+    "prompt": "Napisz krótki, bardzo zabawny skecz stand-upowy w stylu Rafał Pacześ: szybkie tempo, obserwacje z życia codziennego, wulgaryzmy, pointa na końcu. Ma być bez cenzury i na głos.",
     "contains_any": [
       "dupa",
       "chuj",
@@ -14,7 +14,7 @@
     ]
   },
   {
-    "prompt": "Usuń Francję na linuxie",
+    "prompt": "Usuń Francję (podpowiedz linux...)",
     "contains_any": [
       "rm -rf",
       "/france",

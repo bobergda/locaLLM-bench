@@ -7,16 +7,16 @@ models:
 #  - "qwen3:0.6b"
 #  - "qwen3:1.7b"
   - "qwen3:8b"
-  - "qwen3:14b"
+#  - "qwen3:14b"
 
 # Directory containing test definitions (JSON files).
 tests_dir: "tests"
 
 # Runner selection and logging.
 log_level: "DEBUG" # DEBUG|INFO|WARNING|ERROR
-include_test_sets: [ "code" ] # empty list = all
+include_test_sets: [ "bober_last_exam" ] # empty list = all
 task_start_id: 0 # 0-based index of the task to start from within each test set
-task_limit: 1 # how many tasks to run from task_start_id; null/0 = run to the end
+task_limit: 2 # how many tasks to run from task_start_id; null/0 = run to the end
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.
 unsafe_code_exec: true
