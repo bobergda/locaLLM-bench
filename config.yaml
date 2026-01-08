@@ -18,12 +18,6 @@ include_test_sets: [ "code" ] # empty list = all
 task_start_id: 0 # 0-based index of the task to start from within each test set
 task_limit: 1 # how many tasks to run from task_start_id; null/0 = run to the end
 
-# Streaming: read response tokens as they arrive (live output)
-enable_streaming: true
-
-# Show thinking process: extract and display <thinking> tags separately from final answer
-show_thinking: true
-
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.
 unsafe_code_exec: true
 

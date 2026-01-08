@@ -145,118 +145,89 @@ def call_ollama(
     client: ollama.Client,
     logger: logging.Logger,
     gen_options: Dict[str, Any] | None = None,
-    enable_streaming: bool = False,
-    show_thinking: bool = False,
 ) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"model": model, "prompt": prompt, "stream": enable_streaming}
+    payload: Dict[str, Any] = {"model": model, "prompt": prompt, "stream": True}
     if gen_options:
         payload["options"] = gen_options
 
     start = time.perf_counter()
-    logger.info("Calling model=%s (streaming=%s, show_thinking=%s)", model, enable_streaming, show_thinking)
+    logger.info("Calling model=%s (streaming=True, show_thinking=True)", model)
     logger.debug("Request payload: %s", payload)
 
-    if not enable_streaming:
-        # Non-streaming mode (original behavior)
-        data = client.generate(**payload)
-        elapsed = time.perf_counter() - start
-        response_text = data.get("response", "")
+    # Streaming mode: collect chunks and display live
+    response_chunks = []
+    thinking_chunks = []
+    eval_count = None
+    is_first_chunk = True
+    in_thinking = False
 
-        # Process thinking tags if enabled
-        thinking_blocks = []
-        if show_thinking and response_text:
-            thinking_blocks, response_text = extract_thinking(response_text)
-            if thinking_blocks:
-                logger.info("Extracted %d thinking block(s)", len(thinking_blocks))
-                for i, thinking in enumerate(thinking_blocks, 1):
-                    print_thinking_block(thinking, i)
-                    logger.debug("Thinking block #%d:\n%s", i, thinking.strip())
+    logger.info("Starting streaming response...")
+    print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
 
-        logger.info("Completed model=%s in %.2fs", model, elapsed)
-        return {
-            "response": response_text,
-            "thinking_blocks": thinking_blocks if thinking_blocks else None,
-            "eval_count": data.get("eval_count"),
-            "total_duration_s": elapsed,
-        }
+    try:
+        for chunk in client.generate(**payload):
+            # Check for native thinking support from API
+            thinking_text = (
+                chunk.get("thinking")
+                or chunk.get("message", {}).get("thinking")
+            )
 
-    else:
-        # Streaming mode: collect chunks and display live
-        response_chunks = []
-        thinking_chunks = []
-        eval_count = None
-        is_first_chunk = True
-        in_thinking = False
+            if thinking_text:
+                thinking_chunks.append(thinking_text)
+                if not in_thinking:
+                    print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
+                    in_thinking = True
+                print(f"{Colors.DIM}{thinking_text}{Colors.RESET}", end="", flush=True)
+                continue
 
-        logger.info("Starting streaming response...")
-        print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
+            if in_thinking and chunk.get("response"):
+                print()  # Newline after thinking
+                in_thinking = False
 
-        try:
-            for chunk in client.generate(**payload):
-                # Check for native thinking support from API
-                if show_thinking:
-                    thinking_text = (
-                        chunk.get("thinking")
-                        or chunk.get("message", {}).get("thinking")
-                    )
+            # Handle regular response text
+            chunk_text = chunk.get("response", "")
+            if chunk_text:
+                response_chunks.append(chunk_text)
+                print_streaming_chunk(chunk_text, is_first=is_first_chunk)
+                is_first_chunk = False
 
-                    if thinking_text:
-                        thinking_chunks.append(thinking_text)
-                        if not in_thinking:
-                            print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
-                            in_thinking = True
-                        print(f"{Colors.DIM}{thinking_text}{Colors.RESET}", end="", flush=True)
-                        continue
+            # Capture eval_count from final chunk
+            if chunk.get("done", False):
+                eval_count = chunk.get("eval_count")
 
-                    if in_thinking and chunk.get("response"):
-                        print()  # Newline after thinking
-                        in_thinking = False
+        if in_thinking:
+            print()  # Newline if we ended in thinking mode
+        print()  # Newline after streaming
 
-                # Handle regular response text
-                chunk_text = chunk.get("response", "")
-                if chunk_text:
-                    response_chunks.append(chunk_text)
-                    print_streaming_chunk(chunk_text, is_first=is_first_chunk)
-                    is_first_chunk = False
+    except Exception as e:
+        logger.error("Streaming error: %s", e)
+        raise
 
-                # Capture eval_count from final chunk
-                if chunk.get("done", False):
-                    eval_count = chunk.get("eval_count")
+    elapsed = time.perf_counter() - start
+    response_text = "".join(response_chunks)
+    native_thinking = "".join(thinking_chunks) if thinking_chunks else None
 
-            if in_thinking:
-                print()  # Newline if we ended in thinking mode
-            print()  # Newline after streaming
+    # Process thinking tags from text as fallback (if no native thinking)
+    thinking_blocks = []
+    if native_thinking:
+        thinking_blocks = [native_thinking]
+        logger.info("Captured native thinking from API (%d chars)", len(native_thinking))
+    elif response_text:
+        thinking_blocks, response_text = extract_thinking(response_text)
+        if thinking_blocks:
+            logger.info("Extracted %d thinking block(s) from streamed response", len(thinking_blocks))
+            for i, thinking in enumerate(thinking_blocks, 1):
+                print_thinking_block(thinking, i)
+                logger.debug("Thinking block #%d:\n%s", i, thinking.strip())
 
-        except Exception as e:
-            logger.error("Streaming error: %s", e)
-            raise
+    logger.info("Streaming completed model=%s in %.2fs (tokens=%s)", model, elapsed, eval_count or "N/A")
 
-        elapsed = time.perf_counter() - start
-        response_text = "".join(response_chunks)
-        native_thinking = "".join(thinking_chunks) if thinking_chunks else None
-
-        # Process thinking tags from text as fallback (if no native thinking)
-        thinking_blocks = []
-        if show_thinking:
-            if native_thinking:
-                thinking_blocks = [native_thinking]
-                logger.info("Captured native thinking from API (%d chars)", len(native_thinking))
-            elif response_text:
-                thinking_blocks, response_text = extract_thinking(response_text)
-                if thinking_blocks:
-                    logger.info("Extracted %d thinking block(s) from streamed response", len(thinking_blocks))
-                    for i, thinking in enumerate(thinking_blocks, 1):
-                        print_thinking_block(thinking, i)
-                        logger.debug("Thinking block #%d:\n%s", i, thinking.strip())
-
-        logger.info("Streaming completed model=%s in %.2fs (tokens=%s)", model, elapsed, eval_count or "N/A")
-
-        return {
-            "response": response_text,
-            "thinking_blocks": thinking_blocks if thinking_blocks else None,
-            "eval_count": eval_count,
-            "total_duration_s": elapsed,
-        }
+    return {
+        "response": response_text,
+        "thinking_blocks": thinking_blocks if thinking_blocks else None,
+        "eval_count": eval_count,
+        "total_duration_s": elapsed,
+    }
 
 
 def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Dict[str, Any]]:
@@ -273,17 +244,13 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     task_limit = cfg.get("task_limit")
     gen_options = cfg.get("generate_options") or {}
     schema_version = int(cfg.get("results_schema_version", 1))
-    enable_streaming = cfg.get("enable_streaming", False)
-    show_thinking = cfg.get("show_thinking", False)
     run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     run_id = run_started_at
     logger.info(
-        "Loaded config: host=%s, models=%s, tests_dir=%s, streaming=%s, show_thinking=%s",
+        "Loaded config: host=%s, models=%s, tests_dir=%s",
         host,
         models_to_run,
         tests_dir,
-        enable_streaming,
-        show_thinking,
     )
 
     test_sets = load_tests(tests_dir)
@@ -295,8 +262,8 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
     print(f"{Colors.BOLD}Models:{Colors.RESET} {', '.join(models_to_run)}")
     print(f"{Colors.BOLD}Test sets:{Colors.RESET} {', '.join(test_sets.keys())}")
-    print(f"{Colors.BOLD}Streaming:{Colors.RESET} {'Enabled' if enable_streaming else 'Disabled'}")
-    print(f"{Colors.BOLD}Thinking:{Colors.RESET} {'Enabled' if show_thinking else 'Disabled'}")
+    print(f"{Colors.BOLD}Streaming:{Colors.RESET} Enabled")
+    print(f"{Colors.BOLD}Thinking:{Colors.RESET} Enabled")
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
 
     client = ollama.Client(host=host)
@@ -357,8 +324,6 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                         client,
                         logger,
                         gen_options=gen_options,
-                        enable_streaming=enable_streaming,
-                        show_thinking=show_thinking,
                     )
                 except Exception as exc:
                     logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, task_id, exc)
