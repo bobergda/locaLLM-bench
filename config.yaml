@@ -1,6 +1,9 @@
 # Configuration file for locaLLM-bench.
 # See README.md for details.
+provider: "lmstudio" # ollama|lmstudio
 ollama_host: "http://localhost:11434"
+lmstudio_host: "http://localhost:1234/v1"
+lmstudio_api_key: "" # optional, leave empty for no auth
 
 # List of models to benchmark.
 models:
@@ -16,7 +19,7 @@ tests_dir: "tests"
 log_level: "DEBUG" # DEBUG|INFO|WARNING|ERROR
 include_test_sets: [ "bobers_last_exam" ] # empty list = all
 task_start_id: 0 # 0-based index of the task to start from within each test set
-task_limit: 2 # how many tasks to run from task_start_id; null/0 = run to the end
+task_limit: 1 # how many tasks to run from task_start_id; null/0 = run to the end
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.
 unsafe_code_exec: true
@@ -29,6 +32,8 @@ code_test_mode: "safe"
 # Hard timeout for `code_tests` execution (seconds). Timeouts fail the test.
 code_test_timeout_s: 2.0
 
-# Optional Ollama generation options passed as `options` to `client.generate(...)`.
+# Optional generation options.
+# Ollama: passed as `options` to `client.generate(...)`.
+# LM Studio: forwarded to `/v1/chat/completions` with a safe allowlist.
 # Common keys: temperature, seed, num_ctx, top_p, top_k, repeat_penalty.
 generate_options: {}

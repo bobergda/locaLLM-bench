@@ -3,6 +3,8 @@ import logging
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from shutil import rmtree
@@ -17,6 +19,7 @@ class Colors:
     CYAN = "\033[96m"
     YELLOW = "\033[93m"
     GREEN = "\033[92m"
+    RED = "\033[91m"
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -197,11 +200,104 @@ def call_ollama(
     }
 
 
+def _normalize_lmstudio_base(host: str) -> str:
+    base = (host or "").strip().rstrip("/")
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    return base
+
+
+def _filter_lmstudio_options(gen_options: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not gen_options:
+        return {}
+    allowlist = {
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "seed",
+        "n",
+    }
+    filtered = {k: v for k, v in gen_options.items() if k in allowlist}
+    if "max_tokens" not in filtered and "num_predict" in gen_options:
+        filtered["max_tokens"] = gen_options["num_predict"]
+    return filtered
+
+
+def call_lmstudio(
+    model: str,
+    prompt: str,
+    host: str,
+    logger: logging.Logger,
+    gen_options: Dict[str, Any] | None = None,
+    api_key: str | None = None,
+) -> Dict[str, Any]:
+    base = _normalize_lmstudio_base(host)
+    url = f"{base}/chat/completions"
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }
+    payload.update(_filter_lmstudio_options(gen_options))
+
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+
+    start = time.perf_counter()
+    logger.info("Calling LM Studio model=%s (streaming=False)", model)
+    logger.debug("LM Studio request payload: %s", payload)
+
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8") if exc.fp else ""
+        logger.error("LM Studio HTTP error: %s body=%s", exc, error_body)
+        raise
+    except urllib.error.URLError as exc:
+        logger.error("LM Studio connection error: %s", exc)
+        raise
+
+    elapsed = time.perf_counter() - start
+    response_json = json.loads(body)
+
+    choice = (response_json.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    response_text = message.get("content") or ""
+
+    usage = response_json.get("usage") or {}
+    eval_count = usage.get("completion_tokens") or usage.get("total_tokens")
+
+    logger.info("LM Studio completed model=%s in %.2fs (tokens=%s)", model, elapsed, eval_count or "N/A")
+
+    return {
+        "response": response_text,
+        "thinking_blocks": None,
+        "eval_count": eval_count,
+        "total_duration_s": elapsed,
+    }
+
+
 def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Dict[str, Any]]:
     logger = logging.getLogger("ollabench")
     cfg = load_config(config_path)
     tests_dir = Path(cfg.get("tests_dir", "tests"))
-    host = cfg.get("ollama_host", "http://localhost:11434")
+    provider = str(cfg.get("provider", "ollama")).strip().lower()
+    if provider not in {"ollama", "lmstudio"}:
+        raise ValueError("config.yaml: 'provider' must be 'ollama' or 'lmstudio'")
+    host = (
+        cfg.get("ollama_host", "http://localhost:11434")
+        if provider == "ollama"
+        else cfg.get("lmstudio_host", "http://localhost:1234/v1")
+    )
+    lmstudio_api_key = cfg.get("lmstudio_api_key")
     models = cfg.get("models") or []
     if not isinstance(models, list):
         raise TypeError("config.yaml: 'models' must be a list of model names")
@@ -214,7 +310,8 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     run_id = run_started_at
     logger.info(
-        "Loaded config: host=%s, models=%s, tests_dir=%s",
+        "Loaded config: provider=%s, host=%s, models=%s, tests_dir=%s",
+        provider,
         host,
         models_to_run,
         tests_dir,
@@ -227,13 +324,14 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     print(f"\n{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
     print(f"{Colors.CYAN}{Colors.BOLD}   BENCHMARK STARTED{Colors.RESET}")
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
+    print(f"{Colors.BOLD}Provider:{Colors.RESET} {provider}")
     print(f"{Colors.BOLD}Models:{Colors.RESET} {', '.join(models_to_run)}")
     print(f"{Colors.BOLD}Test sets:{Colors.RESET} {', '.join(test_sets.keys())}")
-    print(f"{Colors.BOLD}Streaming:{Colors.RESET} Enabled")
-    print(f"{Colors.BOLD}Thinking:{Colors.RESET} Enabled")
+    print(f"{Colors.BOLD}Streaming:{Colors.RESET} {'Enabled' if provider == 'ollama' else 'Disabled'}")
+    print(f"{Colors.BOLD}Thinking:{Colors.RESET} {'Enabled' if provider == 'ollama' else 'Disabled'}")
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
 
-    client = ollama.Client(host=host)
+    client = ollama.Client(host=host) if provider == "ollama" else None
 
     results: List[Dict[str, Any]] = []
     for model in models_to_run:
@@ -285,16 +383,30 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
 
                 meta = {k: v for k, v in task.items() if k != "prompt"}
                 try:
-                    result = call_ollama(
-                        model,
-                        prompt,
-                        client,
-                        logger,
-                        gen_options=gen_options,
-                    )
+                    if provider == "ollama":
+                        result = call_ollama(
+                            model,
+                            prompt,
+                            client,
+                            logger,
+                            gen_options=gen_options,
+                        )
+                    else:
+                        result = call_lmstudio(
+                            model,
+                            prompt,
+                            host,
+                            logger,
+                            gen_options=gen_options,
+                            api_key=lmstudio_api_key,
+                        )
                 except Exception as exc:
                     logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, task_id, exc)
-                    print(f"\n{Colors.YELLOW}⚠ Error occurred: {str(exc)}{Colors.RESET}")
+                    print(f"\n{Colors.RED}⚠ Error occurred: {str(exc)}{Colors.RESET}")
+                    if provider == "lmstudio":
+                        print(f"{Colors.DIM}Hint: LM Studio must be running with Local Server enabled and `lmstudio_host` reachable.{Colors.RESET}")
+                    else:
+                        print(f"{Colors.DIM}Hint: Ollama must be running and `ollama_host` reachable.{Colors.RESET}")
                     result = {"error": str(exc)}
                 if "response" in result:
                     text = (result.get("response") or "").strip()
@@ -309,7 +421,10 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                     "results_schema_version": schema_version,
                     "run_id": run_id,
                     "run_started_at": run_started_at,
-                    "ollama_host": host,
+                    "provider": provider,
+                    "provider_host": host,
+                    "ollama_host": host if provider == "ollama" else None,
+                    "lmstudio_host": host if provider == "lmstudio" else None,
                     "generate_options": gen_options,
                     "model": model,
                     "test_set": test_set,
@@ -342,6 +457,22 @@ if __name__ == "__main__":
     logger.info("Saved %d results to %s", len(results), output_path)
     write_latest_pointer(run_dir)
     logger.info("Run directory: %s", run_dir)
+
+    error_rows = [row for row in results if row.get("error")]
+    if error_rows:
+        print(f"\n{Colors.RED}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
+        print(f"{Colors.RED}{Colors.BOLD}   ERRORS DETECTED{Colors.RESET}")
+        print(f"{Colors.RED}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
+        print(f"{Colors.BOLD}Failed tasks:{Colors.RESET} {len(error_rows)}")
+        last_error = str(error_rows[-1].get("error") or "").strip()
+        if last_error:
+            print(f"{Colors.BOLD}Last error:{Colors.RESET} {last_error}")
+        provider = str(cfg.get("provider", "ollama")).strip().lower()
+        if provider == "lmstudio":
+            print(f"{Colors.DIM}Check LM Studio is running and `lmstudio_host` is reachable.{Colors.RESET}")
+        else:
+            print(f"{Colors.DIM}Check Ollama is running and `ollama_host` is reachable.{Colors.RESET}")
+        print(f"{Colors.RED}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
 
     print(f"\n{Colors.GREEN}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
     print(f"{Colors.GREEN}{Colors.BOLD}   BENCHMARK COMPLETED{Colors.RESET}")
