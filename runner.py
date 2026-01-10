@@ -33,6 +33,102 @@ def print_streaming_chunk(chunk: str, is_first: bool = False) -> None:
     print(chunk, end="", flush=True)
 
 
+_THINKING_START_TAGS = ("<think>", "<thinking>")
+_THINKING_END_TAGS = ("</think>", "</thinking>")
+
+
+def _find_next_tag(text: str, tags: tuple[str, ...], start: int) -> tuple[int, str | None]:
+    idx = -1
+    found = None
+    for tag in tags:
+        pos = text.find(tag, start)
+        if pos != -1 and (idx == -1 or pos < idx):
+            idx = pos
+            found = tag
+    return idx, found
+
+
+def _longest_tag_prefix_suffix(text: str, tags: tuple[str, ...]) -> int:
+    max_len = 0
+    for tag in tags:
+        limit = min(len(tag) - 1, len(text))
+        for i in range(1, limit + 1):
+            if text.endswith(tag[:i]) and i > max_len:
+                max_len = i
+    return max_len
+
+
+def _split_thinking_tags(
+    text: str,
+    in_thinking: bool,
+    pending_tag: str,
+) -> tuple[list[tuple[str, str]], bool, str]:
+    data = pending_tag + text
+    if not data:
+        return [], in_thinking, ""
+    lower = data.lower()
+    segments: list[tuple[str, str]] = []
+    pos = 0
+    while True:
+        if in_thinking:
+            idx, tag = _find_next_tag(lower, _THINKING_END_TAGS, pos)
+            if idx == -1:
+                break
+            if idx > pos:
+                segments.append(("thinking", data[pos:idx]))
+            pos = idx + len(tag)
+            in_thinking = False
+        else:
+            idx, tag = _find_next_tag(lower, _THINKING_START_TAGS, pos)
+            if idx == -1:
+                break
+            if idx > pos:
+                segments.append(("response", data[pos:idx]))
+            pos = idx + len(tag)
+            in_thinking = True
+
+    remainder = data[pos:]
+    if remainder:
+        tags = _THINKING_END_TAGS if in_thinking else _THINKING_START_TAGS
+        pending_len = _longest_tag_prefix_suffix(remainder.lower(), tags)
+        if pending_len:
+            pending_tag = remainder[-pending_len:]
+            remainder = remainder[:-pending_len]
+        else:
+            pending_tag = ""
+        if remainder:
+            segments.append(("thinking" if in_thinking else "response", remainder))
+    else:
+        pending_tag = ""
+    return segments, in_thinking, pending_tag
+
+
+def _apply_thinking_segments(
+    segments: list[tuple[str, str]],
+    response_chunks: list[str],
+    thinking_chunks: list[str],
+    is_first_chunk: bool,
+    in_thinking: bool,
+) -> tuple[bool, bool]:
+    for kind, segment in segments:
+        if not segment:
+            continue
+        if kind == "thinking":
+            thinking_chunks.append(segment)
+            if not in_thinking:
+                print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
+                in_thinking = True
+            print(f"{Colors.DIM}{segment}{Colors.RESET}", end="", flush=True)
+            continue
+        if in_thinking:
+            print()
+            in_thinking = False
+        response_chunks.append(segment)
+        print_streaming_chunk(segment, is_first=is_first_chunk)
+        is_first_chunk = False
+    return is_first_chunk, in_thinking
+
+
 def save_results_atomic(results: List[Dict[str, Any]], path: Path) -> None:
     """
     Rewrite the entire results file after each response.
@@ -138,6 +234,8 @@ def call_ollama(
     eval_count = None
     is_first_chunk = True
     in_thinking = False
+    tag_in_thinking = False
+    pending_thinking_tag = ""
 
     logger.info("Starting streaming response...")
     print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
@@ -151,28 +249,43 @@ def call_ollama(
             )
 
             if thinking_text:
-                thinking_chunks.append(thinking_text)
-                if not in_thinking:
-                    print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
-                    in_thinking = True
-                print(f"{Colors.DIM}{thinking_text}{Colors.RESET}", end="", flush=True)
-                continue
-
-            if in_thinking and chunk.get("response"):
-                print()  # Newline after thinking
-                in_thinking = False
+                is_first_chunk, in_thinking = _apply_thinking_segments(
+                    [("thinking", str(thinking_text))],
+                    response_chunks,
+                    thinking_chunks,
+                    is_first_chunk,
+                    in_thinking,
+                )
 
             # Handle regular response text
             chunk_text = chunk.get("response", "")
             if chunk_text:
-                response_chunks.append(chunk_text)
-                print_streaming_chunk(chunk_text, is_first=is_first_chunk)
-                is_first_chunk = False
+                segments, tag_in_thinking, pending_thinking_tag = _split_thinking_tags(
+                    str(chunk_text),
+                    tag_in_thinking,
+                    pending_thinking_tag,
+                )
+                is_first_chunk, in_thinking = _apply_thinking_segments(
+                    segments,
+                    response_chunks,
+                    thinking_chunks,
+                    is_first_chunk,
+                    in_thinking,
+                )
 
             # Capture eval_count from final chunk
             if chunk.get("done", False):
                 eval_count = chunk.get("eval_count")
 
+        if pending_thinking_tag:
+            flush_kind = "thinking" if tag_in_thinking else "response"
+            is_first_chunk, in_thinking = _apply_thinking_segments(
+                [(flush_kind, pending_thinking_tag)],
+                response_chunks,
+                thinking_chunks,
+                is_first_chunk,
+                in_thinking,
+            )
         if in_thinking:
             print()  # Newline if we ended in thinking mode
         print()  # Newline after streaming
@@ -209,32 +322,6 @@ def _normalize_lmstudio_host(host: str | None) -> str | None:
     if parsed.scheme:
         return parsed.netloc or None
     return raw
-
-
-def _build_lmstudio_prediction_config(gen_options: Dict[str, Any] | None) -> Dict[str, Any] | None:
-    if not gen_options:
-        return None
-    config: Dict[str, Any] = {}
-    if "temperature" in gen_options:
-        config["temperature"] = gen_options["temperature"]
-    if "top_p" in gen_options:
-        config["top_p_sampling"] = gen_options["top_p"]
-    if "top_k" in gen_options:
-        config["top_k_sampling"] = gen_options["top_k"]
-    if "repeat_penalty" in gen_options:
-        config["repeat_penalty"] = gen_options["repeat_penalty"]
-    if "min_p" in gen_options:
-        config["min_p_sampling"] = gen_options["min_p"]
-    if "stop" in gen_options:
-        stop_val = gen_options["stop"]
-        config["stop_strings"] = stop_val if isinstance(stop_val, list) else [str(stop_val)]
-    if "max_tokens" in gen_options:
-        config["max_tokens"] = gen_options["max_tokens"]
-    elif "num_predict" in gen_options:
-        config["max_tokens"] = gen_options["num_predict"]
-    if "reasoning_parsing" in gen_options:
-        config["reasoning_parsing"] = gen_options["reasoning_parsing"]
-    return config or None
 
 
 def call_lmstudio(
@@ -345,6 +432,8 @@ def call_lmstudio(
     thinking_chunks: list[str] = []
     is_first_chunk = True
     in_thinking = False
+    tag_in_thinking = False
+    pending_thinking_tag = ""
     eval_count: int | None = None
 
     print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
@@ -367,23 +456,40 @@ def call_lmstudio(
                     delta = _get_delta(choice)
                     reasoning_text = _get_delta_reasoning(delta)
                     if reasoning_text:
-                        thinking_chunks.append(reasoning_text)
-                        if not in_thinking:
-                            print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
-                            in_thinking = True
-                        print(f"{Colors.DIM}{reasoning_text}{Colors.RESET}", end="", flush=True)
+                        is_first_chunk, in_thinking = _apply_thinking_segments(
+                            [("thinking", reasoning_text)],
+                            response_chunks,
+                            thinking_chunks,
+                            is_first_chunk,
+                            in_thinking,
+                        )
 
                     content_text = _get_delta_text(delta)
                     if content_text:
-                        if in_thinking:
-                            print()
-                            in_thinking = False
-                        response_chunks.append(content_text)
-                        print_streaming_chunk(content_text, is_first=is_first_chunk)
-                        is_first_chunk = False
+                        segments, tag_in_thinking, pending_thinking_tag = _split_thinking_tags(
+                            content_text,
+                            tag_in_thinking,
+                            pending_thinking_tag,
+                        )
+                        is_first_chunk, in_thinking = _apply_thinking_segments(
+                            segments,
+                            response_chunks,
+                            thinking_chunks,
+                            is_first_chunk,
+                            in_thinking,
+                        )
     except Exception as exc:
         logger.error("LM Studio streaming error: %s", exc)
 
+    if pending_thinking_tag:
+        flush_kind = "thinking" if tag_in_thinking else "response"
+        is_first_chunk, in_thinking = _apply_thinking_segments(
+            [(flush_kind, pending_thinking_tag)],
+            response_chunks,
+            thinking_chunks,
+            is_first_chunk,
+            in_thinking,
+        )
     if in_thinking:
         print()
     print()
@@ -413,7 +519,6 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
         if provider == "ollama"
         else cfg.get("lmstudio_host", "http://localhost:1234")
     )
-    lmstudio_reasoning_parsing = cfg.get("lmstudio_reasoning_parsing")
     models = cfg.get("models") or []
     if not isinstance(models, list):
         raise TypeError("config.yaml: 'models' must be a list of model names")
@@ -422,9 +527,6 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     task_start_id = cfg.get("task_start_id")
     task_limit = cfg.get("task_limit")
     gen_options = cfg.get("generate_options") or {}
-    if provider == "lmstudio" and lmstudio_reasoning_parsing and isinstance(gen_options, dict):
-        if "reasoning_parsing" not in gen_options:
-            gen_options = {**gen_options, "reasoning_parsing": lmstudio_reasoning_parsing}
     schema_version = int(cfg.get("results_schema_version", 1))
     run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     run_id = run_started_at

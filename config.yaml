@@ -4,11 +4,6 @@ provider: "lmstudio" # ollama|lmstudio
 ollama_host: "http://localhost:11434"
 lmstudio_host: "http://localhost:1234/v1"
 lmstudio_api_key: "" # optional, leave empty for no auth
-lmstudio_reasoning_parsing:
-  enabled: true
-  start_string: "<thinking>"
-  end_string: "</thinking>"
-
 # List of models to benchmark.
 models:
 #  - "qwen3:0.6b"

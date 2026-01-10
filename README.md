@@ -39,10 +39,6 @@ Example `config.yaml`:
 provider: "ollama" # ollama|lmstudio
 ollama_host: "http://localhost:11434"
 lmstudio_host: "http://localhost:1234/v1"
-lmstudio_reasoning_parsing:
-  enabled: false
-  start_string: "<thinking>"
-  end_string: "</thinking>"
 models:
   - "llama3"
   - "mistral"
@@ -51,4 +47,4 @@ include_test_sets: [ "code" ] # optional, empty = all
 task_start_id: 0 # optional, 0-based start index per test set
 task_limit: 4 # optional, how many tasks to run from task_start_id (0/null = to the end)
 ```
-`provider` selects the backend, `ollama_host`/`lmstudio_host` point to the server, `lmstudio_reasoning_parsing` controls LM Studio thinking tags, `models` lists model names to benchmark, and `tests_dir` sets the directory with JSON test files.
+`provider` selects the backend, `ollama_host`/`lmstudio_host` point to the server, `models` lists model names to benchmark, and `tests_dir` sets the directory with JSON test files.
