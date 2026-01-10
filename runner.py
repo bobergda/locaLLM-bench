@@ -10,7 +10,6 @@ from pathlib import Path
 from shutil import rmtree
 from typing import Any, Dict, List
 
-import lmstudio
 import ollama
 import yaml
 
@@ -327,7 +326,7 @@ def _normalize_lmstudio_host(host: str | None) -> str | None:
 def call_lmstudio(
     model: str,
     prompt: str,
-    client: lmstudio.Client,
+    api_host: str | None,
     logger: logging.Logger,
     gen_options: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
@@ -402,12 +401,7 @@ def call_lmstudio(
                 yield event
 
     def _get_stream_url() -> str:
-        host = None
-        try:
-            host = client.api_host
-        except Exception:
-            host = getattr(client, "_api_host", None)
-        raw = str(host or "127.0.0.1:1234").strip()
+        raw = str(api_host or "127.0.0.1:1234").strip()
         if "://" not in raw:
             raw = f"http://{raw}"
         parsed = urllib.parse.urlparse(raw)
@@ -553,11 +547,11 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
 
     client = None
+    lmstudio_host = None
     if provider == "ollama":
         client = ollama.Client(host=host)
     else:
         lmstudio_host = _normalize_lmstudio_host(host)
-        client = lmstudio.Client(api_host=lmstudio_host)
 
     results: List[Dict[str, Any]] = []
     for model in models_to_run:
@@ -621,7 +615,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                         result = call_lmstudio(
                             model,
                             prompt,
-                            client,
+                            lmstudio_host,
                             logger,
                             gen_options=gen_options,
                         )

@@ -12,7 +12,7 @@ A minimal harness to benchmark small local LLMs served by Ollama or LM Studio. I
 ## Requirements
 - Python 3.10+
 - Ollama running locally at `http://localhost:11434` or LM Studio at `http://localhost:1234/v1`
-- Python packages: `ollama`, `PyYAML`, `lmstudio`
+- Python packages: `ollama`, `PyYAML`
 
 ## Installation
 ```bash
