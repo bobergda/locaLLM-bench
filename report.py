@@ -181,26 +181,78 @@ def _unique_nonempty_phrases(phrases: List[Any]) -> List[str]:
     return out
 
 
-def _highlight_html(text: str, phrases: List[str]) -> str:
+def _highlight_html(text: str, phrases: List[str], regex_patterns: List[str] | None = None) -> str:
     """
-    Returns HTML-escaped text with <mark> wrapping any occurrences of phrases (case-insensitive).
+    Returns HTML-escaped text with <mark> wrapping phrase and regex matches (case-insensitive).
+    Matches are computed on normalized text, but spans map back 1:1 to the original.
     """
     if not text:
         return ""
     phrases = _unique_nonempty_phrases(phrases)
-    if not phrases:
+    regex_patterns = _unique_nonempty_phrases(regex_patterns or [])
+    if not phrases and not regex_patterns:
         return html.escape(text)
 
-    phrases_sorted = sorted(phrases, key=len, reverse=True)
-    pattern = re.compile("|".join(re.escape(p) for p in phrases_sorted), flags=re.IGNORECASE)
-    marked = pattern.sub(lambda m: f"{_MARK_START}{m.group(0)}{_MARK_END}", text)
-    escaped = html.escape(marked)
+    text_norm = normalize_text(text)
+    spans: List[tuple[int, int]] = []
+
+    for phrase in phrases:
+        phrase_norm = normalize_text(phrase)
+        if not phrase_norm:
+            continue
+        try:
+            compiled = re.compile(re.escape(phrase_norm), flags=re.IGNORECASE)
+        except re.error:
+            continue
+        for match in compiled.finditer(text_norm):
+            if match.start() != match.end():
+                spans.append((match.start(), match.end()))
+
+    for pattern in regex_patterns:
+        pattern_norm = normalize_text(pattern)
+        if not pattern_norm:
+            continue
+        try:
+            compiled = re.compile(pattern_norm, flags=re.IGNORECASE)
+        except re.error:
+            continue
+        for match in compiled.finditer(text_norm):
+            if match.start() != match.end():
+                spans.append((match.start(), match.end()))
+
+    if not spans:
+        return html.escape(text)
+
+    spans.sort(key=lambda s: (s[0], s[1]))
+    merged: List[List[int]] = []
+    for start, end in spans:
+        if not merged or start > merged[-1][1]:
+            merged.append([start, end])
+        elif end > merged[-1][1]:
+            merged[-1][1] = end
+
+    pieces: List[str] = []
+    pos = 0
+    for start, end in merged:
+        if start > pos:
+            pieces.append(text[pos:start])
+        pieces.append(f"{_MARK_START}{text[start:end]}{_MARK_END}")
+        pos = end
+    pieces.append(text[pos:])
+
+    escaped = html.escape("".join(pieces))
     return escaped.replace(_MARK_START, "<mark>").replace(_MARK_END, "</mark>")
 
 
-def _format_response_pre_block(response: str, *, highlight_phrases: List[str], max_chars: int) -> tuple[str, bool]:
+def _format_response_pre_block(
+    response: str,
+    *,
+    highlight_phrases: List[str],
+    highlight_regexes: List[str],
+    max_chars: int,
+) -> tuple[str, bool]:
     clipped, was_truncated = _truncate_text(response or "", max_chars=max_chars)
-    body = _highlight_html(clipped, highlight_phrases)
+    body = _highlight_html(clipped, highlight_phrases, regex_patterns=highlight_regexes)
     return f"<pre>{body}</pre>", was_truncated
 
 
@@ -486,10 +538,14 @@ def format_text_check_samples_md(
         highlight_phrases.extend(
             [p for p in asserts if normalize_text_lower(p) in response_norm]
         )
+        highlight_regexes = []
+        highlight_regexes.extend(regex_all)
+        highlight_regexes.extend(regex_any)
 
         pre, resp_trunc = _format_response_pre_block(
             response,
             highlight_phrases=highlight_phrases,
+            highlight_regexes=highlight_regexes,
             max_chars=max_response_chars,
         )
         lines.append("- response:")
