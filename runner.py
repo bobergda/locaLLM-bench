@@ -772,8 +772,11 @@ if __name__ == "__main__":
 
     output_path = run_dir / "results.json"
     results, errors = run_benchmark(config_file, stream_path=output_path)
-    save_results_atomic(results, output_path)
-    logger.info("Saved %d results to %s", len(results), output_path)
+    if results:
+        save_results_atomic(results, output_path)
+        logger.info("Saved %d results to %s", len(results), output_path)
+    else:
+        logger.info("No results to save; skipping %s", output_path)
     write_latest_pointer(run_dir)
     logger.info("Run directory: %s", run_dir)
 
@@ -799,6 +802,9 @@ if __name__ == "__main__":
     print(f"{Colors.GREEN}{Colors.BOLD}   BENCHMARK COMPLETED{Colors.RESET}")
     print(f"{Colors.GREEN}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
     print(f"{Colors.BOLD}Results:{Colors.RESET} {len(results)} tasks completed")
-    print(f"{Colors.BOLD}Output:{Colors.RESET} {output_path}")
+    if results:
+        print(f"{Colors.BOLD}Output:{Colors.RESET} {output_path}")
+    else:
+        print(f"{Colors.BOLD}Output:{Colors.RESET} (no results saved)")
     print(f"{Colors.BOLD}Logs:{Colors.RESET} {run_dir / 'runner.log'}")
     print(f"{Colors.GREEN}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
