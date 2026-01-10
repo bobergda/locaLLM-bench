@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from shutil import rmtree
@@ -243,63 +244,152 @@ def call_lmstudio(
     logger: logging.Logger,
     gen_options: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    prediction_config = _build_lmstudio_prediction_config(gen_options)
+    def _get_value(obj: Any, key: str) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+
+    def _build_openai_options(options: Dict[str, Any] | None) -> Dict[str, Any]:
+        if not options:
+            return {}
+        payload: Dict[str, Any] = {}
+        if "temperature" in options:
+            payload["temperature"] = options["temperature"]
+        if "top_p" in options:
+            payload["top_p"] = options["top_p"]
+        if "max_tokens" in options:
+            payload["max_tokens"] = options["max_tokens"]
+        elif "num_predict" in options:
+            payload["max_tokens"] = options["num_predict"]
+        if "stop" in options:
+            payload["stop"] = options["stop"]
+        if "seed" in options:
+            payload["seed"] = options["seed"]
+        return payload
+
+    def _get_delta(choice: Any) -> Any:
+        delta = _get_value(choice, "delta")
+        if delta is None:
+            delta = _get_value(choice, "message")
+        return delta or {}
+
+    def _get_delta_text(delta: Any) -> str:
+        if not delta:
+            return ""
+        value = _get_value(delta, "content")
+        if value is None:
+            value = _get_value(delta, "text")
+        if value is None:
+            return ""
+        return str(value)
+
+    def _get_delta_reasoning(delta: Any) -> str:
+        if not delta:
+            return ""
+        value = _get_value(delta, "reasoning_content")
+        if value is None:
+            value = _get_value(delta, "reasoningContent")
+        if value is None:
+            return ""
+        return str(value)
+
+    def _iter_sse_events(response: Any) -> Any:
+        for raw_line in response:
+            if not raw_line:
+                continue
+            try:
+                line = raw_line.decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            line = line.strip()
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                yield event
+
+    def _get_stream_url() -> str:
+        host = None
+        try:
+            host = client.api_host
+        except Exception:
+            host = getattr(client, "_api_host", None)
+        raw = str(host or "127.0.0.1:1234").strip()
+        if "://" not in raw:
+            raw = f"http://{raw}"
+        parsed = urllib.parse.urlparse(raw)
+        base = raw.rstrip("/")
+        path = parsed.path.rstrip("/")
+        if path.endswith("/v1"):
+            return f"{base}/chat/completions"
+        return f"{base}/v1/chat/completions"
+
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+    }
+    payload.update(_build_openai_options(gen_options))
+
     start = time.perf_counter()
     logger.info("Calling LM Studio model=%s (streaming=True)", model)
-    if prediction_config:
-        logger.debug("LM Studio prediction config: %s", prediction_config)
+    logger.debug("LM Studio request payload: %s", payload)
 
-    llm = client.llm.model(model)
     response_chunks: list[str] = []
     thinking_chunks: list[str] = []
     is_first_chunk = True
     in_thinking = False
+    eval_count: int | None = None
 
     print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
-    stream = llm.complete_stream(prompt, config=prediction_config)
-    for fragment in stream:
-        reasoning_type = getattr(fragment, "reasoning_type", "none")
-        chunk_text = fragment.content or ""
-        if reasoning_type == "reasoningStartTag":
-            if not in_thinking:
-                print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
-                in_thinking = True
-            continue
-        if reasoning_type == "reasoningEndTag":
-            if in_thinking:
-                print()
-                in_thinking = False
-            continue
-        if reasoning_type == "reasoning":
-            if chunk_text:
-                thinking_chunks.append(chunk_text)
-                if not in_thinking:
-                    print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
-                    in_thinking = True
-                print(f"{Colors.DIM}{chunk_text}{Colors.RESET}", end="", flush=True)
-            continue
 
-        if in_thinking and chunk_text:
-            print()
-            in_thinking = False
+    request = urllib.request.Request(
+        _get_stream_url(),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        method="POST",
+    )
 
-        if chunk_text:
-            response_chunks.append(chunk_text)
-            print_streaming_chunk(chunk_text, is_first=is_first_chunk)
-            is_first_chunk = False
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            for event in _iter_sse_events(response):
+                usage = event.get("usage") if isinstance(event, dict) else None
+                if isinstance(usage, dict):
+                    eval_count = usage.get("completion_tokens") or usage.get("total_tokens") or eval_count
+
+                for choice in event.get("choices", []) if isinstance(event, dict) else []:
+                    delta = _get_delta(choice)
+                    reasoning_text = _get_delta_reasoning(delta)
+                    if reasoning_text:
+                        thinking_chunks.append(reasoning_text)
+                        if not in_thinking:
+                            print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
+                            in_thinking = True
+                        print(f"{Colors.DIM}{reasoning_text}{Colors.RESET}", end="", flush=True)
+
+                    content_text = _get_delta_text(delta)
+                    if content_text:
+                        if in_thinking:
+                            print()
+                            in_thinking = False
+                        response_chunks.append(content_text)
+                        print_streaming_chunk(content_text, is_first=is_first_chunk)
+                        is_first_chunk = False
+    except Exception as exc:
+        logger.error("LM Studio streaming error: %s", exc)
+
     if in_thinking:
         print()
     print()
 
     elapsed = time.perf_counter() - start
-    result = stream.result()
-    response_text = "".join(response_chunks) or result.content
-    stats = getattr(result, "stats", None)
-    eval_count = None
-    if stats is not None:
-        eval_count = getattr(stats, "predicted_tokens_count", None) or getattr(
-            stats, "total_tokens_count", None
-        )
+    response_text = "".join(response_chunks)
 
     logger.info("LM Studio completed model=%s in %.2fs (tokens=%s)", model, elapsed, eval_count or "N/A")
 
