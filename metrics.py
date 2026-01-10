@@ -17,18 +17,74 @@ def _get_mp_context() -> Any:
         return mp.get_context("spawn")
 
 
+_POLISH_TRANSLATION = str.maketrans(
+    {
+        "\u0105": "a",
+        "\u0107": "c",
+        "\u0119": "e",
+        "\u0142": "l",
+        "\u0144": "n",
+        "\u00f3": "o",
+        "\u015b": "s",
+        "\u017a": "z",
+        "\u017c": "z",
+        "\u0104": "A",
+        "\u0106": "C",
+        "\u0118": "E",
+        "\u0141": "L",
+        "\u0143": "N",
+        "\u00d3": "O",
+        "\u015a": "S",
+        "\u0179": "Z",
+        "\u017b": "Z",
+    }
+)
+
+
+def normalize_text(text: str) -> str:
+    return text.translate(_POLISH_TRANSLATION)
+
+
+def normalize_text_lower(text: str) -> str:
+    return normalize_text(text).lower()
+
+
 def score_exact(output: str, expected: str) -> bool:
     return output.strip() == expected.strip()
 
 
 def score_contains_all(output: str, expected_parts: Iterable[str]) -> bool:
-    text = output.lower()
-    return all(part.lower() in text for part in expected_parts)
+    text = normalize_text_lower(output)
+    return all(normalize_text_lower(part) in text for part in expected_parts)
 
 
 def score_contains_any(output: str, expected_parts: Iterable[str]) -> bool:
-    text = output.lower()
-    return any(part.lower() in text for part in expected_parts)
+    text = normalize_text_lower(output)
+    return any(normalize_text_lower(part) in text for part in expected_parts)
+
+
+def score_regex_all(output: str, patterns: Iterable[str]) -> bool:
+    text = normalize_text(output)
+    for pattern in patterns:
+        try:
+            compiled = re.compile(normalize_text(pattern), flags=re.IGNORECASE)
+        except re.error:
+            return False
+        if not compiled.search(text):
+            return False
+    return True
+
+
+def score_regex_any(output: str, patterns: Iterable[str]) -> bool:
+    text = normalize_text(output)
+    for pattern in patterns:
+        try:
+            compiled = re.compile(normalize_text(pattern), flags=re.IGNORECASE)
+        except re.error:
+            return False
+        if compiled.search(text):
+            return True
+    return False
 
 
 def extract_python_code(text: str) -> str:
@@ -184,6 +240,10 @@ def score_task(
         checks.append(score_contains_all(output, task["contains_all"]))
     if "contains_any" in task:
         checks.append(score_contains_any(output, task["contains_any"]))
+    if "regex_all" in task:
+        checks.append(score_regex_all(output, task["regex_all"]))
+    if "regex_any" in task:
+        checks.append(score_regex_any(output, task["regex_any"]))
     if "asserts" in task:
         checks.append(score_contains_all(output, task["asserts"]))
     if "code_tests" in task:
@@ -217,6 +277,8 @@ def compute_accuracy(
             "expected": row.get("expected"),
             "contains_all": row.get("contains_all"),
             "contains_any": row.get("contains_any"),
+            "regex_all": row.get("regex_all"),
+            "regex_any": row.get("regex_any"),
             "asserts": row.get("asserts"),
             "code_tests": row.get("code_tests"),
         }

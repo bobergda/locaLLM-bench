@@ -23,8 +23,8 @@ tests_dir: "tests"
 
 # Runner selection and logging.
 log_level: "DEBUG" # DEBUG|INFO|WARNING|ERROR
-include_test_sets: [ "bobers_last_exam" ] # empty list = all
-task_start_id: 4 # 0-based index of the task to start from within each test set
+include_test_sets: [ "ignore" ] # empty list = all
+task_start_id: 0 # 0-based index of the task to start from within each test set
 task_limit: 1 # how many tasks to run from task_start_id; null/0 = run to the end
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.

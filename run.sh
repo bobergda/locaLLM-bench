@@ -27,67 +27,50 @@ run_runner() {
 
 run_report() {
   ensure_venv
-  local results_path=""
-
   echo ""
-  echo "Select which results.json to report:"
+  echo "Generate reports for recent runs:"
+  echo "1) Last 5"
+  echo "2) Last 10"
+  echo "3) Last 20"
+  echo "4) All"
+  echo "5) Custom path..."
+  read -rp "> " choice
 
-  local options=()
-  local paths=()
+  local limit=""
+  case "$choice" in
+    1) limit=5 ;;
+    2) limit=10 ;;
+    3) limit=20 ;;
+    4) limit="all" ;;
+    5)
+      read -rp "Enter path to results.json: " results_path
+      if [ ! -f "$results_path" ]; then
+        echo "results.json not found: $results_path" >&2
+        exit 1
+      fi
+      "$PY_BIN" report.py --results "$results_path"
+      return
+      ;;
+    *)
+      echo "Invalid selection." >&2
+      exit 1
+      ;;
+  esac
 
-  if [ -f "results/latest/results.json" ]; then
-    options+=("latest (results/latest/results.json)")
-    paths+=("results/latest/results.json")
-  fi
+  local run_paths=()
   if [ -d "results/runs" ]; then
     mapfile -t run_paths < <(find results/runs -maxdepth 2 -type f -name results.json -print 2>/dev/null | sort -r)
-    local limit=25
-    local count=0
-    for p in "${run_paths[@]}"; do
-      options+=("run $(basename "$(dirname "$p")") ($p)")
-      paths+=("$p")
-      count=$((count + 1))
-      if [ "$count" -ge "$limit" ]; then
-        break
-      fi
-    done
   fi
-  options+=("custom path…")
-  paths+=("__CUSTOM__")
-
-  local i=1
-  for opt in "${options[@]}"; do
-    echo "$i) $opt"
-    i=$((i + 1))
-  done
-  read -rp "> " choice
-  if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#paths[@]}" ]; then
-    echo "Invalid selection." >&2
-    exit 1
+  if [ "${#run_paths[@]}" -eq 0 ] && [ -f "results/latest/results.json" ]; then
+    run_paths=("results/latest/results.json")
   fi
-  results_path="${paths[$((choice - 1))]}"
-  if [ "$results_path" = "__CUSTOM__" ]; then
-    read -rp "Enter path to results.json: " results_path
-  fi
-  if [ ! -f "$results_path" ]; then
-    echo "results.json not found: $results_path" >&2
-    exit 1
-  fi
-
-  "$PY_BIN" report.py --results "$results_path"
-}
-
-run_report_all() {
-  ensure_venv
-  if [ ! -d "results/runs" ]; then
-    echo "No runs found (results/runs does not exist)." >&2
-    exit 1
-  fi
-
-  mapfile -t run_paths < <(find results/runs -maxdepth 2 -type f -name results.json -print 2>/dev/null | sort)
   if [ "${#run_paths[@]}" -eq 0 ]; then
-    echo "No results.json files found under results/runs/." >&2
+    echo "No results.json files found." >&2
     exit 1
+  fi
+
+  if [ "$limit" != "all" ] && [ "${#run_paths[@]}" -gt "$limit" ]; then
+    run_paths=("${run_paths[@]:0:$limit}")
   fi
 
   echo "Generating report for ${#run_paths[@]} run(s)..."
@@ -98,10 +81,30 @@ run_report_all() {
   echo "Done."
 }
 
+clean_runs_without_results() {
+  if [ ! -d "results/runs" ]; then
+    echo "No runs found (results/runs does not exist)." >&2
+    exit 1
+  fi
+
+  local removed=0
+  while IFS= read -r -d '' dir; do
+    if ! find "$dir" -maxdepth 2 -type f -name results.json -print -quit | grep -q .; then
+      rm -rf "$dir"
+      echo "Removed $dir"
+      removed=$((removed + 1))
+    fi
+  done < <(find results/runs -mindepth 1 -maxdepth 1 -type d -print0)
+
+  if [ "$removed" -eq 0 ]; then
+    echo "No runs without results.json found."
+  fi
+}
+
 echo "Select action:"
 echo "1) Run benchmark (runner.py)"
-echo "2) Generate report (report.py)"
-echo "3) Generate reports for all runs"
+echo "2) Generate reports for recent runs (5/10/20/all)"
+echo "4) Clean runs without results.json"
 echo "i) Install dependencies (python3.12 venv)"
 echo "q) Quit"
 read -rp "> " choice
@@ -110,7 +113,7 @@ case "$choice" in
 
   1) run_runner ;;
   2) run_report ;;
-  3) run_report_all ;;
+  4) clean_runs_without_results ;;
   i|I) run_install ;;
   q|Q) echo "Bye"; exit 0 ;;
   *) echo "Unknown option"; exit 1 ;;

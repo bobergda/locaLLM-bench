@@ -15,6 +15,10 @@ from metrics import (
     run_code_tests_detailed_inline,
     score_contains_all,
     score_contains_any,
+    score_regex_all,
+    score_regex_any,
+    normalize_text,
+    normalize_text_lower,
 )
 
 _MARK_START = "__LOCALLLM_MARK_START__"
@@ -229,10 +233,14 @@ def _failure_reasons(
     if contains_all and not score_contains_all(output, contains_all):
         reasons.append("contains_all")
     contains_any = row.get("contains_any")
-    if contains_any:
-        text = output.lower()
-        if not any(str(part).lower() in text for part in contains_any):
-            reasons.append("contains_any")
+    if contains_any and not score_contains_any(output, contains_any):
+        reasons.append("contains_any")
+    regex_all = row.get("regex_all")
+    if regex_all and not score_regex_all(output, regex_all):
+        reasons.append("regex_all")
+    regex_any = row.get("regex_any")
+    if regex_any and not score_regex_any(output, regex_any):
+        reasons.append("regex_any")
     asserts = row.get("asserts")
     if asserts and not score_contains_all(output, asserts):
         reasons.append("asserts")
@@ -294,6 +302,10 @@ def _score_row_text_only(row: Dict[str, Any]) -> bool:
         checks.append(score_contains_all(output, row["contains_all"]))
     if row.get("contains_any") is not None:
         checks.append(score_contains_any(output, row["contains_any"]))
+    if row.get("regex_all") is not None:
+        checks.append(score_regex_all(output, row["regex_all"]))
+    if row.get("regex_any") is not None:
+        checks.append(score_regex_any(output, row["regex_any"]))
     if row.get("asserts") is not None:
         checks.append(score_contains_all(output, row["asserts"]))
 
@@ -304,7 +316,7 @@ def collect_text_check_samples(
     results: List[Dict],
 ) -> List[Dict[str, Any]]:
     """
-    Returns a list of rows with *text* checks only (expected/contains_all/contains_any/asserts),
+    Returns a list of rows with *text* checks only (expected/contains_all/contains_any/regex_all/regex_any/asserts),
     preserving the original order from results.json.
     """
     out: List[Dict[str, Any]] = []
@@ -313,7 +325,10 @@ def collect_text_check_samples(
         test_set = row.get("test_set")
         if not model or not test_set:
             continue
-        has_text_checks = any(row.get(k) is not None for k in ("expected", "contains_all", "contains_any", "asserts"))
+        has_text_checks = any(
+            row.get(k) is not None
+            for k in ("expected", "contains_all", "contains_any", "regex_all", "regex_any", "asserts")
+        )
         if not has_text_checks:
             continue
         ok = bool(_score_row_text_only(row))
@@ -330,6 +345,8 @@ def collect_text_check_samples(
                 "expected": row.get("expected"),
                 "contains_all": row.get("contains_all") or [],
                 "contains_any": row.get("contains_any") or [],
+                "regex_all": row.get("regex_all") or [],
+                "regex_any": row.get("regex_any") or [],
                 "asserts": row.get("asserts") or [],
                 "error": row.get("error"),
             }
@@ -338,8 +355,42 @@ def collect_text_check_samples(
 
 
 def _missing_phrases(text: str, phrases: List[str]) -> List[str]:
-    lowered = text.lower()
-    return [p for p in phrases if p.lower() not in lowered]
+    lowered = normalize_text_lower(text)
+    return [p for p in phrases if normalize_text_lower(p) not in lowered]
+
+
+def _regex_match(text: str, pattern: str) -> tuple[bool, bool]:
+    try:
+        compiled = re.compile(normalize_text(pattern), flags=re.IGNORECASE)
+    except re.error:
+        return False, False
+    return bool(compiled.search(normalize_text(text))), True
+
+
+def _regex_missing(text: str, patterns: List[str]) -> tuple[List[str], List[str]]:
+    missing: List[str] = []
+    invalid: List[str] = []
+    for pattern in patterns:
+        matched, valid = _regex_match(text, pattern)
+        if not valid:
+            invalid.append(pattern)
+            missing.append(pattern)
+        elif not matched:
+            missing.append(pattern)
+    return missing, invalid
+
+
+def _regex_matched_any(text: str, patterns: List[str]) -> tuple[List[str], List[str]]:
+    matched: List[str] = []
+    invalid: List[str] = []
+    for pattern in patterns:
+        is_match, valid = _regex_match(text, pattern)
+        if not valid:
+            invalid.append(pattern)
+            continue
+        if is_match:
+            matched.append(pattern)
+    return matched, invalid
 
 
 def format_text_check_samples_md(
@@ -373,11 +424,16 @@ def format_text_check_samples_md(
         expected = row.get("expected")
         contains_all = _unique_nonempty_phrases(list(row.get("contains_all") or []))
         contains_any = _unique_nonempty_phrases(list(row.get("contains_any") or []))
+        regex_all = _unique_nonempty_phrases(list(row.get("regex_all") or []))
+        regex_any = _unique_nonempty_phrases(list(row.get("regex_any") or []))
         asserts = _unique_nonempty_phrases(list(row.get("asserts") or []))
 
         missing_all = _missing_phrases(response, contains_all) if contains_all else []
         missing_asserts = _missing_phrases(response, asserts) if asserts else []
-        matched_any = [p for p in contains_any if p.lower() in response.lower()] if contains_any else []
+        response_norm = normalize_text_lower(response)
+        matched_any = [p for p in contains_any if normalize_text_lower(p) in response_norm] if contains_any else []
+        missing_regex_all, invalid_regex_all = _regex_missing(response, regex_all) if regex_all else ([], [])
+        matched_regex_any, invalid_regex_any = _regex_matched_any(response, regex_any) if regex_any else ([], [])
 
         tps = _row_tokens_per_sec(row)
         tps_txt = f"{tps:.1f}" if tps is not None else "n/a"
@@ -403,15 +459,33 @@ def format_text_check_samples_md(
                 lines.append(f"  - matched: {', '.join(matched_any)}")
             else:
                 lines.append(f"  - missing any-of: {', '.join(contains_any)}")
+        if regex_all:
+            lines.append(f"- regex_all: {'OK' if not missing_regex_all else 'FAIL'} ({', '.join(regex_all)})")
+            if missing_regex_all:
+                lines.append(f"  - missing: {', '.join(missing_regex_all)}")
+            if invalid_regex_all:
+                lines.append(f"  - invalid: {', '.join(invalid_regex_all)}")
+        if regex_any:
+            lines.append(f"- regex_any: {'OK' if matched_regex_any else 'FAIL'} ({', '.join(regex_any)})")
+            if matched_regex_any:
+                lines.append(f"  - matched: {', '.join(matched_regex_any)}")
+            else:
+                lines.append(f"  - missing any-of: {', '.join(regex_any)}")
+            if invalid_regex_any:
+                lines.append(f"  - invalid: {', '.join(invalid_regex_any)}")
         if asserts:
             lines.append(f"- asserts: {'OK' if not missing_asserts else 'FAIL'} ({', '.join(asserts)})")
             if missing_asserts:
                 lines.append(f"  - missing: {', '.join(missing_asserts)}")
 
         highlight_phrases = []
-        highlight_phrases.extend([p for p in contains_all if p.lower() in response.lower()])
+        highlight_phrases.extend(
+            [p for p in contains_all if normalize_text_lower(p) in response_norm]
+        )
         highlight_phrases.extend(matched_any)
-        highlight_phrases.extend([p for p in asserts if p.lower() in response.lower()])
+        highlight_phrases.extend(
+            [p for p in asserts if normalize_text_lower(p) in response_norm]
+        )
 
         pre, resp_trunc = _format_response_pre_block(
             response,
@@ -458,17 +532,21 @@ def compute_contains_all_stats(results: List[Dict]) -> Dict[str, Dict[str, Tuple
     for row in results:
         if row.get("error"):
             continue
-        parts = []
-        if row.get("contains_all"):
-            parts.extend(row["contains_all"])
-        if row.get("asserts"):
-            parts.extend(row["asserts"])
-        if not parts:
+        contains_all = row.get("contains_all") or []
+        asserts = row.get("asserts") or []
+        regex_all = row.get("regex_all") or []
+        if not (contains_all or asserts or regex_all):
             continue
         model = row["model"]
         test_set = row["test_set"]
         output = row.get("response", "")
-        is_ok = score_contains_all(output, parts)
+        is_ok = True
+        if contains_all and not score_contains_all(output, contains_all):
+            is_ok = False
+        if asserts and not score_contains_all(output, asserts):
+            is_ok = False
+        if regex_all and not score_regex_all(output, regex_all):
+            is_ok = False
         if model not in stats:
             stats[model] = {}
         passed, total = stats[model].get(test_set, (0, 0))
@@ -523,6 +601,10 @@ def score_row(
         checks.append(score_contains_all(output, row["contains_all"]))
     if row.get("contains_any") is not None:
         checks.append(score_contains_any(output, row["contains_any"]))
+    if row.get("regex_all") is not None:
+        checks.append(score_regex_all(output, row["regex_all"]))
+    if row.get("regex_any") is not None:
+        checks.append(score_regex_any(output, row["regex_any"]))
     if row.get("asserts") is not None:
         checks.append(score_contains_all(output, row["asserts"]))
     if row.get("code_tests") is not None:
@@ -902,7 +984,7 @@ def _write_report_md(
         f.write(format_markdown_table(accuracies, overall_acc))
         f.write("\n\n")
         if contains_all_stats:
-            f.write("## Contains_all checks\n\n")
+            f.write("## Contains_all/regex_all checks\n\n")
             f.write(format_contains_all_table(contains_all_stats))
             f.write("\n\n")
         if allow_code_exec and code_test_stats:
