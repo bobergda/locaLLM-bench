@@ -1,15 +1,19 @@
 # Configuration file for locaLLM-bench.
 # See README.md for details.
-provider: "lmstudio" # ollama|lmstudio
+provider: "ollama" # ollama|lmstudio
 ollama_host: "http://localhost:11434"
 lmstudio_host: "http://localhost:1234/v1"
 lmstudio_api_key: "" # optional, leave empty for no auth
+lmstudio_include_usage: true # request token usage in streaming responses (OpenAI-compatible)
 # List of models to benchmark.
 models:
-#  - "qwen3:0.6b"
+  - "qwen3:0.6b"
 #  - "qwen3:1.7b"
-  - "qwen/qwen3-8b"
+#  - "qwen/qwen3-8b"
 #  - "qwen3:14b"
+#  - "qwen3-30b-a3b-instruct-2507"
+#  - "bielik-11b-v3.0-instruct@q8_0"
+#  - "bielik-11b-v3.0-instruct@q4_k_m"
 
 # Directory containing test definitions (JSON files).
 tests_dir: "tests"
@@ -17,7 +21,7 @@ tests_dir: "tests"
 # Runner selection and logging.
 log_level: "DEBUG" # DEBUG|INFO|WARNING|ERROR
 include_test_sets: [ "bobers_last_exam" ] # empty list = all
-task_start_id: 0 # 0-based index of the task to start from within each test set
+task_start_id: 1 # 0-based index of the task to start from within each test set
 task_limit: 1 # how many tasks to run from task_start_id; null/0 = run to the end
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.

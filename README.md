@@ -39,6 +39,7 @@ Example `config.yaml`:
 provider: "ollama" # ollama|lmstudio
 ollama_host: "http://localhost:11434"
 lmstudio_host: "http://localhost:1234/v1"
+lmstudio_include_usage: true # request token usage in streaming responses
 models:
   - "llama3"
   - "mistral"

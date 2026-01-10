@@ -32,6 +32,37 @@ def print_streaming_chunk(chunk: str, is_first: bool = False) -> None:
     print(chunk, end="", flush=True)
 
 
+def _format_result_stats(result: Dict[str, Any]) -> str | None:
+    items: list[str] = []
+    duration = result.get("total_duration_s")
+    if isinstance(duration, (int, float)):
+        items.append(f"duration={duration:.2f}s")
+    eval_count = result.get("eval_count")
+    if eval_count is not None:
+        items.append(f"eval_count={eval_count}")
+    prompt_tokens = result.get("prompt_tokens")
+    if prompt_tokens is not None:
+        items.append(f"prompt_tokens={prompt_tokens}")
+    completion_tokens = result.get("completion_tokens")
+    if completion_tokens is not None:
+        items.append(f"completion_tokens={completion_tokens}")
+    total_tokens = result.get("total_tokens")
+    if total_tokens is not None:
+        items.append(f"total_tokens={total_tokens}")
+    token_count = None
+    if completion_tokens is not None:
+        token_count = completion_tokens
+    elif eval_count is not None:
+        token_count = eval_count
+    elif total_tokens is not None:
+        token_count = total_tokens
+    if isinstance(duration, (int, float)) and duration > 0 and token_count is not None:
+        items.append(f"tok/s={token_count / duration:.2f}")
+    if not items:
+        return None
+    return ", ".join(items)
+
+
 _THINKING_START_TAGS = ("<think>", "<thinking>")
 _THINKING_END_TAGS = ("</think>", "</thinking>")
 
@@ -329,6 +360,7 @@ def call_lmstudio(
     api_host: str | None,
     logger: logging.Logger,
     gen_options: Dict[str, Any] | None = None,
+    include_usage: bool = True,
 ) -> Dict[str, Any]:
     def _get_value(obj: Any, key: str) -> Any:
         if isinstance(obj, dict):
@@ -416,6 +448,8 @@ def call_lmstudio(
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
     }
+    if include_usage:
+        payload["stream_options"] = {"include_usage": True}
     payload.update(_build_openai_options(gen_options))
 
     start = time.perf_counter()
@@ -429,6 +463,7 @@ def call_lmstudio(
     tag_in_thinking = False
     pending_thinking_tag = ""
     eval_count: int | None = None
+    usage_info: Dict[str, Any] | None = None
 
     print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
 
@@ -444,6 +479,7 @@ def call_lmstudio(
             for event in _iter_sse_events(response):
                 usage = event.get("usage") if isinstance(event, dict) else None
                 if isinstance(usage, dict):
+                    usage_info = usage
                     eval_count = usage.get("completion_tokens") or usage.get("total_tokens") or eval_count
 
                 for choice in event.get("choices", []) if isinstance(event, dict) else []:
@@ -474,6 +510,7 @@ def call_lmstudio(
                         )
     except Exception as exc:
         logger.error("LM Studio streaming error: %s", exc)
+        raise
 
     if pending_thinking_tag:
         flush_kind = "thinking" if tag_in_thinking else "response"
@@ -497,11 +534,17 @@ def call_lmstudio(
         "response": response_text,
         "thinking_blocks": ["".join(thinking_chunks)] if thinking_chunks else None,
         "eval_count": eval_count,
+        "prompt_tokens": usage_info.get("prompt_tokens") if usage_info else None,
+        "completion_tokens": usage_info.get("completion_tokens") if usage_info else None,
+        "total_tokens": usage_info.get("total_tokens") if usage_info else None,
         "total_duration_s": elapsed,
     }
 
 
-def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Dict[str, Any]]:
+def run_benchmark(
+    config_path: Path,
+    stream_path: Path | None = None,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     logger = logging.getLogger("ollabench")
     cfg = load_config(config_path)
     tests_dir = Path(cfg.get("tests_dir", "tests"))
@@ -521,6 +564,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     task_start_id = cfg.get("task_start_id")
     task_limit = cfg.get("task_limit")
     gen_options = cfg.get("generate_options") or {}
+    lmstudio_include_usage = bool(cfg.get("lmstudio_include_usage", True))
     schema_version = int(cfg.get("results_schema_version", 1))
     run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     run_id = run_started_at
@@ -543,7 +587,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     print(f"{Colors.BOLD}Models:{Colors.RESET} {', '.join(models_to_run)}")
     print(f"{Colors.BOLD}Test sets:{Colors.RESET} {', '.join(test_sets.keys())}")
     print(f"{Colors.BOLD}Streaming:{Colors.RESET} Enabled")
-    print(f"{Colors.BOLD}Thinking:{Colors.RESET} {'Enabled' if provider == 'ollama' else 'Disabled'}")
+    print(f"{Colors.BOLD}Thinking:{Colors.RESET} Enabled (model-dependent)")
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
 
     client = None
@@ -554,6 +598,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
         lmstudio_host = _normalize_lmstudio_host(host)
 
     results: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
     for model in models_to_run:
         logger.info("Starting model: %s", model)
         print(f"\n{Colors.YELLOW}{Colors.BOLD}{'─' * 70}{Colors.RESET}")
@@ -618,6 +663,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                             lmstudio_host,
                             logger,
                             gen_options=gen_options,
+                            include_usage=lmstudio_include_usage,
                         )
                 except Exception as exc:
                     logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, task_id, exc)
@@ -627,15 +673,30 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                     else:
                         print(f"{Colors.DIM}Hint: Ollama must be running and `ollama_host` reachable.{Colors.RESET}")
                     result = {"error": str(exc)}
+                response_text = (result.get("response") or "").strip()
+                error_message = result.get("error")
+                if error_message:
+                    errors.append(
+                        {
+                            "model": model,
+                            "test_set": test_set,
+                            "task_id": task_id,
+                            "error": str(error_message),
+                        }
+                    )
+                if error_message and not response_text:
+                    continue
                 if "response" in result:
-                    text = (result.get("response") or "").strip()
-                    logger.debug("Response [model=%s, test_set=%s, task=%d]:\n%s", model, test_set, task_id, text)
+                    logger.debug("Response [model=%s, test_set=%s, task=%d]:\n%s", model, test_set, task_id, response_text)
                     # Show summary
                     thinking_count = len(result.get("thinking_blocks") or [])
                     if thinking_count > 0:
                         print(f"\n{Colors.GREEN}✓ Task completed with {thinking_count} thinking block(s){Colors.RESET}")
                     else:
                         print(f"\n{Colors.GREEN}✓ Task completed{Colors.RESET}")
+                    stats_line = _format_result_stats(result)
+                    if stats_line:
+                        print(f"{Colors.DIM}Stats:{Colors.RESET} {stats_line}")
                 row = {
                     "results_schema_version": schema_version,
                     "run_id": run_id,
@@ -655,7 +716,7 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                 results.append(row)
                 if stream_path:
                     save_results_atomic(results, stream_path)
-    return results
+    return results, errors
 
 
 if __name__ == "__main__":
@@ -671,13 +732,13 @@ if __name__ == "__main__":
     print(f"{Colors.DIM}Detailed logs: {run_dir / 'runner.log'}{Colors.RESET}\n")
 
     output_path = run_dir / "results.json"
-    results = run_benchmark(config_file, stream_path=output_path)
+    results, errors = run_benchmark(config_file, stream_path=output_path)
     save_results_atomic(results, output_path)
     logger.info("Saved %d results to %s", len(results), output_path)
     write_latest_pointer(run_dir)
     logger.info("Run directory: %s", run_dir)
 
-    error_rows = [row for row in results if row.get("error")]
+    error_rows = errors
     if error_rows:
         print(f"\n{Colors.RED}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
         print(f"{Colors.RED}{Colors.BOLD}   ERRORS DETECTED{Colors.RESET}")
