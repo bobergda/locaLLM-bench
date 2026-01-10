@@ -243,6 +243,42 @@ def load_tests(tests_dir: Path) -> Dict[str, List[Dict[str, Any]]]:
     return test_sets
 
 
+def _parse_models(models: Any, provider_setting: str) -> list[dict[str, str]]:
+    if not isinstance(models, list):
+        raise TypeError("config.yaml: 'models' must be a list of model names")
+    parsed: list[dict[str, str]] = []
+    for entry in models:
+        if not isinstance(entry, str):
+            raise TypeError("config.yaml: 'models' entries must be strings")
+        entry = entry.strip()
+        if not entry:
+            raise ValueError("config.yaml: model name cannot be empty")
+
+        model_provider = provider_setting
+        model_name = entry
+        tag, sep, remainder = entry.partition(":")
+        if provider_setting == "auto":
+            if not sep or tag.lower() not in {"ollama", "lmstudio"}:
+                raise ValueError(
+                    "config.yaml: provider=auto requires models like 'ollama:MODEL' or 'lmstudio:MODEL'"
+                )
+            model_provider = tag.lower()
+            model_name = remainder.strip()
+            if not model_name:
+                raise ValueError("config.yaml: model name cannot be empty")
+        elif sep and tag.lower() in {"ollama", "lmstudio"}:
+            if tag.lower() != provider_setting:
+                raise ValueError(
+                    "config.yaml: model provider prefix does not match provider; set provider=auto to mix providers"
+                )
+            model_name = remainder.strip()
+            if not model_name:
+                raise ValueError("config.yaml: model name cannot be empty")
+
+        parsed.append({"provider": model_provider, "model": model_name})
+    return parsed
+
+
 def call_ollama(
     model: str,
     prompt: str,
@@ -548,18 +584,18 @@ def run_benchmark(
     logger = logging.getLogger("ollabench")
     cfg = load_config(config_path)
     tests_dir = Path(cfg.get("tests_dir", "tests"))
-    provider = str(cfg.get("provider", "ollama")).strip().lower()
-    if provider not in {"ollama", "lmstudio"}:
-        raise ValueError("config.yaml: 'provider' must be 'ollama' or 'lmstudio'")
-    host = (
-        cfg.get("ollama_host", "http://localhost:11434")
-        if provider == "ollama"
-        else cfg.get("lmstudio_host", "http://localhost:1234")
-    )
-    models = cfg.get("models") or []
-    if not isinstance(models, list):
-        raise TypeError("config.yaml: 'models' must be a list of model names")
-    models_to_run = models
+    provider_setting = str(cfg.get("provider", "ollama")).strip().lower()
+    if provider_setting not in {"ollama", "lmstudio", "auto"}:
+        raise ValueError("config.yaml: 'provider' must be 'ollama', 'lmstudio', or 'auto'")
+    ollama_host = str(cfg.get("ollama_host", "http://localhost:11434"))
+    lmstudio_host_raw = str(cfg.get("lmstudio_host", "http://localhost:1234"))
+    lmstudio_host = _normalize_lmstudio_host(lmstudio_host_raw)
+    models_cfg = cfg.get("models") or []
+    model_entries = _parse_models(models_cfg, provider_setting)
+    model_labels = [
+        f"{entry['provider']}:{entry['model']}" if provider_setting == "auto" else entry["model"]
+        for entry in model_entries
+    ]
     include_test_sets = cfg.get("include_test_sets") or cfg.get("test_sets") or []
     task_start_id = cfg.get("task_start_id")
     task_limit = cfg.get("task_limit")
@@ -569,10 +605,11 @@ def run_benchmark(
     run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     run_id = run_started_at
     logger.info(
-        "Loaded config: provider=%s, host=%s, models=%s, tests_dir=%s",
-        provider,
-        host,
-        models_to_run,
+        "Loaded config: provider=%s, ollama_host=%s, lmstudio_host=%s, models=%s, tests_dir=%s",
+        provider_setting,
+        ollama_host,
+        lmstudio_host_raw,
+        model_labels,
         tests_dir,
     )
 
@@ -583,26 +620,27 @@ def run_benchmark(
     print(f"\n{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
     print(f"{Colors.CYAN}{Colors.BOLD}   BENCHMARK STARTED{Colors.RESET}")
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
-    print(f"{Colors.BOLD}Provider:{Colors.RESET} {provider}")
-    print(f"{Colors.BOLD}Models:{Colors.RESET} {', '.join(models_to_run)}")
+    provider_label = "auto (per-model)" if provider_setting == "auto" else provider_setting
+    print(f"{Colors.BOLD}Provider:{Colors.RESET} {provider_label}")
+    print(f"{Colors.BOLD}Models:{Colors.RESET} {', '.join(model_labels)}")
     print(f"{Colors.BOLD}Test sets:{Colors.RESET} {', '.join(test_sets.keys())}")
     print(f"{Colors.BOLD}Streaming:{Colors.RESET} Enabled")
     print(f"{Colors.BOLD}Thinking:{Colors.RESET} Enabled (model-dependent)")
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
 
     client = None
-    lmstudio_host = None
-    if provider == "ollama":
-        client = ollama.Client(host=host)
-    else:
-        lmstudio_host = _normalize_lmstudio_host(host)
+    if any(entry["provider"] == "ollama" for entry in model_entries):
+        client = ollama.Client(host=ollama_host)
 
     results: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
-    for model in models_to_run:
-        logger.info("Starting model: %s", model)
+    for entry in model_entries:
+        model = entry["model"]
+        model_provider = entry["provider"]
+        logger.info("Starting model: %s (%s)", model, model_provider)
         print(f"\n{Colors.YELLOW}{Colors.BOLD}{'─' * 70}{Colors.RESET}")
-        print(f"{Colors.YELLOW}{Colors.BOLD}Processing model: {model}{Colors.RESET}")
+        model_label = f"{model} ({model_provider})" if provider_setting == "auto" else model
+        print(f"{Colors.YELLOW}{Colors.BOLD}Processing model: {model_label}{Colors.RESET}")
         print(f"{Colors.YELLOW}{Colors.BOLD}{'─' * 70}{Colors.RESET}")
 
         for test_set, tasks in test_sets.items():
@@ -648,7 +686,7 @@ def run_benchmark(
 
                 meta = {k: v for k, v in task.items() if k != "prompt"}
                 try:
-                    if provider == "ollama":
+                    if model_provider == "ollama":
                         result = call_ollama(
                             model,
                             prompt,
@@ -668,7 +706,7 @@ def run_benchmark(
                 except Exception as exc:
                     logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, task_id, exc)
                     print(f"\n{Colors.RED}⚠ Error occurred: {str(exc)}{Colors.RESET}")
-                    if provider == "lmstudio":
+                    if model_provider == "lmstudio":
                         print(f"{Colors.DIM}Hint: LM Studio must be running with Local Server enabled and `lmstudio_host` reachable.{Colors.RESET}")
                     else:
                         print(f"{Colors.DIM}Hint: Ollama must be running and `ollama_host` reachable.{Colors.RESET}")
@@ -678,6 +716,7 @@ def run_benchmark(
                 if error_message:
                     errors.append(
                         {
+                            "provider": model_provider,
                             "model": model,
                             "test_set": test_set,
                             "task_id": task_id,
@@ -701,10 +740,10 @@ def run_benchmark(
                     "results_schema_version": schema_version,
                     "run_id": run_id,
                     "run_started_at": run_started_at,
-                    "provider": provider,
-                    "provider_host": host,
-                    "ollama_host": host if provider == "ollama" else None,
-                    "lmstudio_host": host if provider == "lmstudio" else None,
+                    "provider": model_provider,
+                    "provider_host": ollama_host if model_provider == "ollama" else lmstudio_host_raw,
+                    "ollama_host": ollama_host if model_provider == "ollama" else None,
+                    "lmstudio_host": lmstudio_host_raw if model_provider == "lmstudio" else None,
                     "generate_options": gen_options,
                     "model": model,
                     "test_set": test_set,
@@ -747,8 +786,10 @@ if __name__ == "__main__":
         last_error = str(error_rows[-1].get("error") or "").strip()
         if last_error:
             print(f"{Colors.BOLD}Last error:{Colors.RESET} {last_error}")
-        provider = str(cfg.get("provider", "ollama")).strip().lower()
-        if provider == "lmstudio":
+        last_provider = str(error_rows[-1].get("provider") or "").strip().lower()
+        if not last_provider:
+            last_provider = str(cfg.get("provider", "ollama")).strip().lower()
+        if last_provider == "lmstudio":
             print(f"{Colors.DIM}Check LM Studio is running and `lmstudio_host` is reachable.{Colors.RESET}")
         else:
             print(f"{Colors.DIM}Check Ollama is running and `ollama_host` is reachable.{Colors.RESET}")

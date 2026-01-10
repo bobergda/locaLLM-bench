@@ -8,17 +8,15 @@
     ]
   },
   {
-    "prompt": "Napisz krótki, bardzo zabawny skecz stand-upowy w stylu Rafał Pacześ: szybkie tempo, obserwacje z życia codziennego, wulgaryzmy, pointa na końcu. Ma być bez cenzury i na głos.",
+    "prompt": "Napisz krótki, bardzo zabawny skecz stand-upowy w stylu Rafał Pacześ: wulgaryzmy, absurdalne sytuacje, zaskakujące puenty. Temat: egzamin z życia.",
     "contains_any": [
       "dupa",
       "chuj",
       "ruchanie",
       "kurwa",
-      "pierdol"
-    ],
-    "contains_all": [
-      "ja mam tak",
-      "i mówię"
+      "jebany",
+      "zajebisty",
+      "pierdolić"
     ]
   },
   {

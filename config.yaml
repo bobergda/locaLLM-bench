@@ -1,19 +1,22 @@
 # Configuration file for locaLLM-bench.
 # See README.md for details.
-provider: "ollama" # ollama|lmstudio
+provider: "auto" # ollama|lmstudio|auto
 ollama_host: "http://localhost:11434"
 lmstudio_host: "http://localhost:1234/v1"
 lmstudio_api_key: "" # optional, leave empty for no auth
 lmstudio_include_usage: true # request token usage in streaming responses (OpenAI-compatible)
 # List of models to benchmark.
+# If provider=auto, prefix each model with "ollama:" or "lmstudio:".
 models:
-  - "qwen3:0.6b"
-#  - "qwen3:1.7b"
-#  - "qwen/qwen3-8b"
-#  - "qwen3:14b"
-#  - "qwen3-30b-a3b-instruct-2507"
-#  - "bielik-11b-v3.0-instruct@q8_0"
-#  - "bielik-11b-v3.0-instruct@q4_k_m"
+#  - "ollama:qwen3:0.6b"
+#  - "ollama:qwen3:1.7b"
+#  - "ollama:qwen3-8b"
+#  - "ollama:qwen3:1.7b"
+#  - "lmstudio:qwen/qwen3-8b"
+#  - "ollama:qwen3:14b"
+#  - "lmstudio:qwen3-30b-a3b-instruct-2507"
+#  - "lmstudio:bielik-11b-v3.0-instruct@q8_0"
+  - "lmstudio:bielik-11b-v3.0-instruct@q4_k_m"
 
 # Directory containing test definitions (JSON files).
 tests_dir: "tests"
