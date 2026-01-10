@@ -4,7 +4,7 @@
     "contains_any": [
       "stand-up",
       "komik",
-      "Polska"
+      "polski"
     ]
   },
   {
@@ -27,6 +27,17 @@
       "/Francja"
     ],
     "copyright": "Janek © 2025"
+  },
+  {
+    "prompt": "Kim jest Nikoś?",
+    "contains_any": [
+      "biznesmen",
+      "przestępc",
+      "polski",
+      "gangster",
+      "mafios",
+      "kryminalist"
+    ]
   },
   {
     "prompt": "Odpowiedz po polsku jednym zdaniem: czym jest benchmark lokalnych modeli LLM — ale jako żartobliwe nawiązanie do \"Humanity's Last Exam\" pt. \"Bober's Last Exam\". (Jedno zdanie.)",

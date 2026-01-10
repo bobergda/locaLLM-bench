@@ -15,7 +15,7 @@ models:
 #  - "lmstudio:qwen/qwen3-8b"
 #  - "ollama:qwen3:14b"
 #  - "lmstudio:qwen3-30b-a3b-instruct-2507"
-#  - "lmstudio:bielik-11b-v3.0-instruct@q8_0"
+  - "lmstudio:bielik-11b-v3.0-instruct@q8_0"
   - "lmstudio:bielik-11b-v3.0-instruct@q4_k_m"
 
 # Directory containing test definitions (JSON files).
@@ -24,7 +24,7 @@ tests_dir: "tests"
 # Runner selection and logging.
 log_level: "DEBUG" # DEBUG|INFO|WARNING|ERROR
 include_test_sets: [ "bobers_last_exam" ] # empty list = all
-task_start_id: 1 # 0-based index of the task to start from within each test set
+task_start_id: 4 # 0-based index of the task to start from within each test set
 task_limit: 1 # how many tasks to run from task_start_id; null/0 = run to the end
 
 # SECURITY: executing model-produced code is dangerous. Keep this false unless you trust `results.json`.
