@@ -3,13 +3,13 @@ import logging
 import os
 import sys
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from shutil import rmtree
 from typing import Any, Dict, List
 
+import lmstudio
 import ollama
 import yaml
 
@@ -200,86 +200,112 @@ def call_ollama(
     }
 
 
-def _normalize_lmstudio_base(host: str) -> str:
-    base = (host or "").strip().rstrip("/")
-    if not base.endswith("/v1"):
-        base = f"{base}/v1"
-    return base
+def _normalize_lmstudio_host(host: str | None) -> str | None:
+    raw = (host or "").strip()
+    if not raw:
+        return None
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme:
+        return parsed.netloc or None
+    return raw
 
 
-def _filter_lmstudio_options(gen_options: Dict[str, Any] | None) -> Dict[str, Any]:
+def _build_lmstudio_prediction_config(gen_options: Dict[str, Any] | None) -> Dict[str, Any] | None:
     if not gen_options:
-        return {}
-    allowlist = {
-        "temperature",
-        "top_p",
-        "max_tokens",
-        "frequency_penalty",
-        "presence_penalty",
-        "stop",
-        "seed",
-        "n",
-    }
-    filtered = {k: v for k, v in gen_options.items() if k in allowlist}
-    if "max_tokens" not in filtered and "num_predict" in gen_options:
-        filtered["max_tokens"] = gen_options["num_predict"]
-    return filtered
+        return None
+    config: Dict[str, Any] = {}
+    if "temperature" in gen_options:
+        config["temperature"] = gen_options["temperature"]
+    if "top_p" in gen_options:
+        config["top_p_sampling"] = gen_options["top_p"]
+    if "top_k" in gen_options:
+        config["top_k_sampling"] = gen_options["top_k"]
+    if "repeat_penalty" in gen_options:
+        config["repeat_penalty"] = gen_options["repeat_penalty"]
+    if "min_p" in gen_options:
+        config["min_p_sampling"] = gen_options["min_p"]
+    if "stop" in gen_options:
+        stop_val = gen_options["stop"]
+        config["stop_strings"] = stop_val if isinstance(stop_val, list) else [str(stop_val)]
+    if "max_tokens" in gen_options:
+        config["max_tokens"] = gen_options["max_tokens"]
+    elif "num_predict" in gen_options:
+        config["max_tokens"] = gen_options["num_predict"]
+    if "reasoning_parsing" in gen_options:
+        config["reasoning_parsing"] = gen_options["reasoning_parsing"]
+    return config or None
 
 
 def call_lmstudio(
     model: str,
     prompt: str,
-    host: str,
+    client: lmstudio.Client,
     logger: logging.Logger,
     gen_options: Dict[str, Any] | None = None,
-    api_key: str | None = None,
 ) -> Dict[str, Any]:
-    base = _normalize_lmstudio_base(host)
-    url = f"{base}/chat/completions"
-    payload: Dict[str, Any] = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
-    }
-    payload.update(_filter_lmstudio_options(gen_options))
-
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-
+    prediction_config = _build_lmstudio_prediction_config(gen_options)
     start = time.perf_counter()
-    logger.info("Calling LM Studio model=%s (streaming=False)", model)
-    logger.debug("LM Studio request payload: %s", payload)
+    logger.info("Calling LM Studio model=%s (streaming=True)", model)
+    if prediction_config:
+        logger.debug("LM Studio prediction config: %s", prediction_config)
 
-    try:
-        with urllib.request.urlopen(request, timeout=600) as response:
-            body = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8") if exc.fp else ""
-        logger.error("LM Studio HTTP error: %s body=%s", exc, error_body)
-        raise
-    except urllib.error.URLError as exc:
-        logger.error("LM Studio connection error: %s", exc)
-        raise
+    llm = client.llm.model(model)
+    response_chunks: list[str] = []
+    thinking_chunks: list[str] = []
+    is_first_chunk = True
+    in_thinking = False
+
+    print(f"\n{Colors.YELLOW}[Streaming from {model}...]{Colors.RESET}")
+    stream = llm.complete_stream(prompt, config=prediction_config)
+    for fragment in stream:
+        reasoning_type = getattr(fragment, "reasoning_type", "none")
+        chunk_text = fragment.content or ""
+        if reasoning_type == "reasoningStartTag":
+            if not in_thinking:
+                print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
+                in_thinking = True
+            continue
+        if reasoning_type == "reasoningEndTag":
+            if in_thinking:
+                print()
+                in_thinking = False
+            continue
+        if reasoning_type == "reasoning":
+            if chunk_text:
+                thinking_chunks.append(chunk_text)
+                if not in_thinking:
+                    print(f"\n{Colors.CYAN}{Colors.BOLD}🧠 Model thinking...{Colors.RESET}")
+                    in_thinking = True
+                print(f"{Colors.DIM}{chunk_text}{Colors.RESET}", end="", flush=True)
+            continue
+
+        if in_thinking and chunk_text:
+            print()
+            in_thinking = False
+
+        if chunk_text:
+            response_chunks.append(chunk_text)
+            print_streaming_chunk(chunk_text, is_first=is_first_chunk)
+            is_first_chunk = False
+    if in_thinking:
+        print()
+    print()
 
     elapsed = time.perf_counter() - start
-    response_json = json.loads(body)
-
-    choice = (response_json.get("choices") or [{}])[0]
-    message = choice.get("message") or {}
-    response_text = message.get("content") or ""
-
-    usage = response_json.get("usage") or {}
-    eval_count = usage.get("completion_tokens") or usage.get("total_tokens")
+    result = stream.result()
+    response_text = "".join(response_chunks) or result.content
+    stats = getattr(result, "stats", None)
+    eval_count = None
+    if stats is not None:
+        eval_count = getattr(stats, "predicted_tokens_count", None) or getattr(
+            stats, "total_tokens_count", None
+        )
 
     logger.info("LM Studio completed model=%s in %.2fs (tokens=%s)", model, elapsed, eval_count or "N/A")
 
     return {
         "response": response_text,
-        "thinking_blocks": None,
+        "thinking_blocks": ["".join(thinking_chunks)] if thinking_chunks else None,
         "eval_count": eval_count,
         "total_duration_s": elapsed,
     }
@@ -295,9 +321,9 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     host = (
         cfg.get("ollama_host", "http://localhost:11434")
         if provider == "ollama"
-        else cfg.get("lmstudio_host", "http://localhost:1234/v1")
+        else cfg.get("lmstudio_host", "http://localhost:1234")
     )
-    lmstudio_api_key = cfg.get("lmstudio_api_key")
+    lmstudio_reasoning_parsing = cfg.get("lmstudio_reasoning_parsing")
     models = cfg.get("models") or []
     if not isinstance(models, list):
         raise TypeError("config.yaml: 'models' must be a list of model names")
@@ -306,6 +332,9 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     task_start_id = cfg.get("task_start_id")
     task_limit = cfg.get("task_limit")
     gen_options = cfg.get("generate_options") or {}
+    if provider == "lmstudio" and lmstudio_reasoning_parsing and isinstance(gen_options, dict):
+        if "reasoning_parsing" not in gen_options:
+            gen_options = {**gen_options, "reasoning_parsing": lmstudio_reasoning_parsing}
     schema_version = int(cfg.get("results_schema_version", 1))
     run_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     run_id = run_started_at
@@ -327,11 +356,16 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
     print(f"{Colors.BOLD}Provider:{Colors.RESET} {provider}")
     print(f"{Colors.BOLD}Models:{Colors.RESET} {', '.join(models_to_run)}")
     print(f"{Colors.BOLD}Test sets:{Colors.RESET} {', '.join(test_sets.keys())}")
-    print(f"{Colors.BOLD}Streaming:{Colors.RESET} {'Enabled' if provider == 'ollama' else 'Disabled'}")
+    print(f"{Colors.BOLD}Streaming:{Colors.RESET} Enabled")
     print(f"{Colors.BOLD}Thinking:{Colors.RESET} {'Enabled' if provider == 'ollama' else 'Disabled'}")
     print(f"{Colors.CYAN}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
 
-    client = ollama.Client(host=host) if provider == "ollama" else None
+    client = None
+    if provider == "ollama":
+        client = ollama.Client(host=host)
+    else:
+        lmstudio_host = _normalize_lmstudio_host(host)
+        client = lmstudio.Client(api_host=lmstudio_host)
 
     results: List[Dict[str, Any]] = []
     for model in models_to_run:
@@ -395,10 +429,9 @@ def run_benchmark(config_path: Path, stream_path: Path | None = None) -> List[Di
                         result = call_lmstudio(
                             model,
                             prompt,
-                            host,
+                            client,
                             logger,
                             gen_options=gen_options,
-                            api_key=lmstudio_api_key,
                         )
                 except Exception as exc:
                     logger.error("Request failed for model=%s test_set=%s task=%d: %s", model, test_set, task_id, exc)

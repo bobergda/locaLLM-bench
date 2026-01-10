@@ -4,13 +4,17 @@ provider: "lmstudio" # ollama|lmstudio
 ollama_host: "http://localhost:11434"
 lmstudio_host: "http://localhost:1234/v1"
 lmstudio_api_key: "" # optional, leave empty for no auth
+lmstudio_reasoning_parsing:
+  enabled: false
+  start_string: "<thinking>"
+  end_string: "</thinking>"
 
 # List of models to benchmark.
 models:
 #  - "qwen3:0.6b"
 #  - "qwen3:1.7b"
-#  - "qwen3:8b"
-  - "qwen3:14b"
+  - "qwen/qwen3-8b"
+#  - "qwen3:14b"
 
 # Directory containing test definitions (JSON files).
 tests_dir: "tests"
