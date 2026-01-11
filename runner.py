@@ -25,6 +25,31 @@ class Colors:
     DIM = "\033[2m"
 
 
+def _print_fatal_error(title: str, message: str, hints: list[str] | None = None) -> None:
+    print(f"\n{Colors.RED}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
+    print(f"{Colors.RED}{Colors.BOLD}   {title}{Colors.RESET}")
+    print(f"{Colors.RED}{Colors.BOLD}{'═' * 70}{Colors.RESET}")
+    print(f"{Colors.BOLD}Error:{Colors.RESET} {message}")
+    if hints:
+        for hint in hints:
+            print(f"{Colors.DIM}Hint: {hint}{Colors.RESET}")
+    print(f"{Colors.RED}{Colors.BOLD}{'═' * 70}{Colors.RESET}\n")
+
+
+def _config_hints(message: str) -> list[str]:
+    hints: list[str] = []
+    if "provider=auto requires models like" in message:
+        hints.append("Example: provider: auto + models: ['ollama:llama3', 'lmstudio:phi3']")
+        hints.append("Or: provider: ollama + models: ['llama3']")
+    if "'models' must be a list" in message:
+        hints.append("Example: models: ['llama3']")
+    if "task_start_id" in message:
+        hints.append("Use an integer (e.g., 0) or null.")
+    if "'provider' must be" in message:
+        hints.append("Allowed values: ollama, lmstudio, auto.")
+    return hints
+
+
 def print_streaming_chunk(chunk: str, is_first: bool = False) -> None:
     """Print a streaming response chunk."""
     if is_first:
@@ -247,12 +272,12 @@ def _parse_models(models: Any, provider_setting: str) -> list[dict[str, str]]:
     if not isinstance(models, list):
         raise TypeError("config.yaml: 'models' must be a list of model names")
     parsed: list[dict[str, str]] = []
-    for entry in models:
+    for idx, entry in enumerate(models, start=1):
         if not isinstance(entry, str):
-            raise TypeError("config.yaml: 'models' entries must be strings")
+            raise TypeError(f"config.yaml: 'models' entries must be strings (bad entry #{idx})")
         entry = entry.strip()
         if not entry:
-            raise ValueError("config.yaml: model name cannot be empty")
+            raise ValueError(f"config.yaml: model name cannot be empty (bad entry #{idx})")
 
         model_provider = provider_setting
         model_name = entry
@@ -260,12 +285,13 @@ def _parse_models(models: Any, provider_setting: str) -> list[dict[str, str]]:
         if provider_setting == "auto":
             if not sep or tag.lower() not in {"ollama", "lmstudio"}:
                 raise ValueError(
-                    "config.yaml: provider=auto requires models like 'ollama:MODEL' or 'lmstudio:MODEL'"
+                    "config.yaml: provider=auto requires models like 'ollama:MODEL' or 'lmstudio:MODEL' "
+                    f"(bad entry #{idx}: {entry!r})"
                 )
             model_provider = tag.lower()
             model_name = remainder.strip()
             if not model_name:
-                raise ValueError("config.yaml: model name cannot be empty")
+                raise ValueError(f"config.yaml: model name cannot be empty (bad entry #{idx})")
         elif sep and tag.lower() in {"ollama", "lmstudio"}:
             if tag.lower() != provider_setting:
                 raise ValueError(
@@ -273,7 +299,7 @@ def _parse_models(models: Any, provider_setting: str) -> list[dict[str, str]]:
                 )
             model_name = remainder.strip()
             if not model_name:
-                raise ValueError("config.yaml: model name cannot be empty")
+                raise ValueError(f"config.yaml: model name cannot be empty (bad entry #{idx})")
 
         parsed.append({"provider": model_provider, "model": model_name})
     return parsed
@@ -760,7 +786,24 @@ def run_benchmark(
 
 if __name__ == "__main__":
     config_file = Path("config.yaml")
-    cfg = load_config(config_file)
+    try:
+        cfg = load_config(config_file)
+    except Exception as exc:
+        _print_fatal_error(
+            "CONFIG ERROR",
+            f"Failed to read {config_file}: {exc}",
+            ["Check YAML syntax and file permissions."],
+        )
+        sys.exit(1)
+
+    if not isinstance(cfg, dict):
+        _print_fatal_error(
+            "CONFIG ERROR",
+            "config.yaml must contain a top-level mapping (key: value).",
+            ["Example: provider: ollama", "Example: models: ['llama3']"],
+        )
+        sys.exit(1)
+
     run_dir = make_run_dir(cfg)
     log_level = str(cfg.get("log_level", "INFO"))
     logger = setup_logger(run_dir / "runner.log", log_level=log_level)
@@ -771,7 +814,14 @@ if __name__ == "__main__":
     print(f"{Colors.DIM}Detailed logs: {run_dir / 'runner.log'}{Colors.RESET}\n")
 
     output_path = run_dir / "results.json"
-    results, errors = run_benchmark(config_file, stream_path=output_path)
+    try:
+        results, errors = run_benchmark(config_file, stream_path=output_path)
+    except Exception as exc:
+        logger.exception("Benchmark failed with error: %s", exc)
+        message = str(exc) or exc.__class__.__name__
+        hints = _config_hints(message) if message.startswith("config.yaml:") else []
+        _print_fatal_error("BENCHMARK FAILED", message, hints)
+        sys.exit(1)
     if results:
         save_results_atomic(results, output_path)
         logger.info("Saved %d results to %s", len(results), output_path)
