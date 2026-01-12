@@ -104,7 +104,7 @@ clean_runs_without_results() {
 echo "Select action:"
 echo "1) Run benchmark (runner.py)"
 echo "2) Generate reports for recent runs (5/10/20/all)"
-echo "4) Clean runs without results.json"
+echo "3) Clean runs without results.json"
 echo "i) Install dependencies (python3.12 venv)"
 echo "q) Quit"
 read -rp "> " choice
@@ -113,7 +113,7 @@ case "$choice" in
 
   1) run_runner ;;
   2) run_report ;;
-  4) clean_runs_without_results ;;
+  3) clean_runs_without_results ;;
   i|I) run_install ;;
   q|Q) echo "Bye"; exit 0 ;;
   *) echo "Unknown option"; exit 1 ;;

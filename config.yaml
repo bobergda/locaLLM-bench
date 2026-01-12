@@ -15,9 +15,10 @@ models:
 #  - "lmstudio:qwen/qwen3-8b"
 #  - "ollama:qwen3:14b"
 #  - "lmstudio:qwen3-30b-a3b-instruct-2507"
-#  - "lmstudio:bielik-11b-v3.0-instruct@q8_0"
+  - "lmstudio:bielik-11b-v3.0-instruct@q8_0"
 #  - "lmstudio:bielik-11b-v3.0-instruct@q4_k_m"
-  - "ministral-3-14b-instruct-2512"
+#  - "lmstudio:ministral-3-14b-instruct-2512"
+#  - "lmstudio:mistralai_mistral-small-3.2-24b-instruct-2506@q4_k_l"
 
 # Directory containing test definitions (JSON files).
 tests_dir: "tests"
